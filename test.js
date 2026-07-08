@@ -5,29 +5,33 @@ const NOTION_KEY = process.env.NOTION_KEY || "YOUR_NOTION_API_KEY";
 const DATABASE_ID = process.env.DATABASE_ID || "YOUR_NOTION_DATABASE_ID";
 
 const fs = require('fs');
-// Load the awesome logo we generated!
-const dummyImageBuffer = fs.readFileSync('/Users/domgeshworld/.gemini/antigravity-ide/brain/b6aad6b7-aee3-4d1c-9750-dc71915b3cf9/npm_package_logo_1783465227145.png');
 
-// A dummy text file masquerading as audio for testing
-const dummyAudioBuffer = Buffer.from('Testing audio upload content');
+// A tiny valid 1x1 pixel transparent PNG
+const dummyImageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==', 'base64');
+const dummyAudioBuffer = Buffer.from('SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYxLjEuMTAwAAAAAAAAAAAAAAD/+0DAAAAAAAAAAAAAAAAAAAAAAABR0wAAA', 'base64');
 
-async function testUpload() {
-    console.log("🚀 Testing Image Upload...");
+async function runTests() {
+    if (!NOTION_KEY || !DATABASE_ID) {
+        console.error("❌ ERROR: Please set NOTION_KEY and DATABASE_ID in test.js to run the live tests.");
+        return;
+    }
+
     try {
-        const imageId = await uploadToNotion(NOTION_KEY, dummyImageBuffer, "image/png", "test-image.png");
-        console.log("✅ Image Uploaded! Notion File ID:", imageId);
-        
-        console.log("🚀 Testing Audio Upload...");
-        const audioId = await uploadToNotion(NOTION_KEY, dummyAudioBuffer, "audio/mp4", "test-audio.m4a");
-        console.log("✅ Audio Uploaded! Notion File ID:", audioId);
+        console.log("🚀 Testing Image Upload...");
+        const imageId = await uploadToNotion(NOTION_KEY, dummyImageBuffer, 'image/png', 'test-image.png');
+        console.log(`✅ Image Uploaded! Notion File ID: ${imageId}`);
 
-        console.log("📝 Creating a Notion page to verify them...");
+        console.log("🚀 Testing Audio Upload...");
+        const audioId = await uploadToNotion(NOTION_KEY, dummyAudioBuffer, 'audio/mp4', 'test-audio.m4a');
+        console.log(`✅ Audio Uploaded! Notion File ID: ${audioId}`);
+
+        console.log("📝 Creating a Notion Page to attach these files...");
         const pageRes = await fetch("https://api.notion.com/v1/pages", {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${NOTION_KEY}`,
                 "Content-Type": "application/json",
-                "Notion-Version": "2022-06-28"
+                "Notion-Version": "2026-03-11"
             },
             body: JSON.stringify({
                 parent: { database_id: DATABASE_ID },

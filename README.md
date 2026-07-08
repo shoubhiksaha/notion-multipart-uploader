@@ -55,8 +55,8 @@ async function run() {
             object: "block",
             type: "audio",
             audio: {
-                type: "external",
-                external: { url: `https://www.notion.so/signed/${fileId}` } // Simplified for example
+                type: "file_upload",
+                file_upload: { id: fileId }
             }
         }]
     });

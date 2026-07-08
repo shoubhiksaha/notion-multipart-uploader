@@ -11,7 +11,7 @@ export interface UploadOptions {
 
 export declare function uploadToNotion(
     apiKey: string,
-    fileBuffer: Buffer | Blob | Uint8Array,
+    fileBuffer: Uint8Array | Blob | any,
     mimeType: string,
     filename?: string,
     options?: UploadOptions
