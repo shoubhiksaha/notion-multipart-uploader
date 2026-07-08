@@ -19,6 +19,12 @@ Because the official `@notionhq/client` SDK requires manually orchestrating a mu
 npm install notion-multipart-uploader
 ```
 
+> **Looking for the ultra-lightweight Version 1?**
+> If you are absolutely certain your app will only ever upload small files (under 20MB) and you want the absolute leanest possible script without the V2 multi-part chunking logic, you can install the legacy V1:
+> ```bash
+> npm install notion-multipart-uploader@1.0.1
+> ```
+
 ## Getting an API Key
 To use this package, you need a Notion Integration Token:
 1. Go to [Notion's Integration Dashboard](https://www.notion.so/my-integrations).
