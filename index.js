@@ -17,12 +17,25 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     const maxRetries = options.retries || 3;
     const timeoutMs = options.timeoutMs;
     const userSignal = options.signal;
-    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB (allows 5GiB / 10MiB = 512 parts, well under 1000 limit)
 
     const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
+    
+    // Notion strictly limits files to 5GB (paid workspaces)
+    if (size > 5 * 1024 * 1024 * 1024) {
+        throw new Error("File exceeds Notion's absolute maximum size limit of 5GB.");
+    }
+
     const isMultiPart = size > 20971520; // Notion's 20MB limit
     const mode = isMultiPart ? "multi_part" : "single_part";
-    const numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
+    
+    // Default to 10MB chunks, but dynamically scale up if we hit the 1000 part limit
+    let CHUNK_SIZE = 10 * 1024 * 1024;
+    let numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
+
+    if (numParts > 1000) {
+        CHUNK_SIZE = Math.ceil(size / 1000);
+        numParts = 1000;
+    }
 
     // Exponential backoff retry wrapper with Abort/Timeout support
     const fetchWithRetry = async (url, fetchOptions, retries = maxRetries) => {
