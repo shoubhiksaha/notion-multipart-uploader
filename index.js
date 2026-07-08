@@ -1,58 +1,112 @@
 /**
- * Uploads a binary file directly to Notion's servers using a 2-step multipart flow.
+ * Uploads a binary file directly to Notion's servers using native fetch.
+ * Automatically handles single-part (<= 20MB) and multi-part (> 20MB) chunking.
  * 
  * @param {string} apiKey - Your Notion Integration Token
  * @param {Buffer|Blob} fileBuffer - The binary data of the file (audio, image, pdf, etc.)
  * @param {string} mimeType - e.g., 'audio/mp4', 'image/jpeg', 'application/pdf'
  * @param {string} filename - The name of the file (e.g., 'voice-note.m4a')
+ * @param {object} options - Additional options like retries or Notion API version
  * @returns {Promise<string>} The Notion File ID to use in your blocks
  */
-async function uploadToNotion(apiKey, fileBuffer, mimeType, filename) {
+async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = {}) {
     if (!apiKey) throw new Error("Notion API Key is required");
     if (!fileBuffer) throw new Error("File buffer is required");
 
+    const notionVersion = options.notionVersion || "2022-06-28";
+    const maxRetries = options.retries || 3;
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+
     const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
-    if (size && size > 20971520) {
-        throw new Error("File exceeds Notion's 20MB direct upload limit. Multi-part chunking for larger files will be supported in v2.0.");
+    const isMultiPart = size > 20971520; // Notion's 20MB limit
+    const mode = isMultiPart ? "multi_part" : "single_part";
+    const numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
+
+    // Exponential backoff retry wrapper
+    const fetchWithRetry = async (url, fetchOptions, retries = maxRetries) => {
+        for (let i = 0; i < retries; i++) {
+            const res = await fetch(url, fetchOptions);
+            if (res.ok) return res;
+            if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); 
+        }
+    };
+
+    const createBody = {
+        filename: filename || "uploaded-file",
+        content_type: mimeType,
+        mode: mode
+    };
+    if (isMultiPart) {
+        createBody.number_of_parts = numParts;
     }
 
     // Step 1: Initialize the upload with Notion
-    const createRes = await fetch("https://api.notion.com/v1/file_uploads", {
+    const createRes = await fetchWithRetry("https://api.notion.com/v1/file_uploads", {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
+            "Notion-Version": notionVersion
         },
-        body: JSON.stringify({
-            filename: filename || "uploaded-file",
-            content_type: mimeType
-        })
+        body: JSON.stringify(createBody)
     });
 
-    if (!createRes.ok) {
-        throw new Error(`Notion Init Upload Failed: ${await createRes.text()}`);
+    const createData = await createRes.json();
+    const { id, upload_url, complete_url } = createData;
+
+    // Step 2: Upload the binary data
+    if (!isMultiPart) {
+        // Single-part upload
+        const form = new FormData();
+        const blob = new Blob([fileBuffer], { type: mimeType });
+        form.append("file", blob, filename || "uploaded-file");
+
+        await fetchWithRetry(upload_url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Notion-Version": notionVersion
+            },
+            body: form
+        });
+        return id;
     }
-    
-    const { id, upload_url } = await createRes.json();
 
-    // Step 2: Upload the binary data via Multipart FormData
-    const form = new FormData();
-    const blob = new Blob([fileBuffer], { type: mimeType });
-    form.append("file", blob, filename || "uploaded-file");
+    // Multi-part chunked upload
+    for (let part = 0; part < numParts; part++) {
+        const start = part * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, size);
+        
+        // Handle slice for both Buffer and Blob
+        const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
 
-    const uploadRes = await fetch(upload_url, {
+        const form = new FormData();
+        const blob = new Blob([chunk], { type: mimeType });
+        form.append("file", blob, filename || "uploaded-file");
+        form.append("part_number", (part + 1).toString()); // 1-indexed
+
+        await fetchWithRetry(upload_url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Notion-Version": notionVersion
+            },
+            body: form
+        });
+    }
+
+    // Step 3: Complete multi-part upload
+    const targetCompleteUrl = complete_url || `https://api.notion.com/v1/file_uploads/${id}/complete`;
+    await fetchWithRetry(targetCompleteUrl, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${apiKey}`,
-            "Notion-Version": "2022-06-28"
+            "Content-Type": "application/json",
+            "Notion-Version": notionVersion
         },
-        body: form
+        body: JSON.stringify({})
     });
-
-    if (!uploadRes.ok) {
-        throw new Error(`Notion Binary Upload Failed: ${await uploadRes.text()}`);
-    }
 
     return id;
 }

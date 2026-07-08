@@ -5,10 +5,11 @@ A zero-dependency, native `fetch` helper to upload files (audio, images, PDFs, e
 Because the official `@notionhq/client` SDK does not abstract the binary `multipart/form-data` upload step, this package handles the entire 2-step direct upload flow for you in one single, AI-optimized function call.
 
 ## Features
+- **Smart Multi-Part Chunking (V2):** Automatically slices files larger than 20MB into chunks and uploads them using Notion's `multi_part` API.
+- **Enterprise Resilience (V2):** Built-in exponential backoff. If a chunk fails due to a network blip, it automatically pauses and retries.
 - **Zero Dependencies:** Uses native Node `fetch` and `FormData`.
 - **Any File Type & Media:** Works flawlessly with Videos (`.mp4`), Phone Gallery exports, Audio (`.m4a`, `.mp3`), Images (`.png`, `.jpg`), PDFs, and any raw binary buffers.
-- **Strict 20MB Limit Safety:** Automatically detects and safely rejects files over 20MB before initializing the API call to prevent Notion boundary errors.
-- **Tiny Size:** < 100 lines of code. Doesn't bloat your node_modules.
+- **Tiny Size:** Doesn't bloat your node_modules.
 - **TypeScript Support:** Full autocomplete out of the box with JSDoc types.
 
 ## Installation
