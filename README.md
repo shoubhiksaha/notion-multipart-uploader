@@ -1,8 +1,7 @@
 # Notion Multipart Uploader
 
-A zero-dependency, native `fetch` helper to upload files (audio, images, PDFs, etc.) directly to Notion's servers via their `v1/file_uploads` multipart API.
-
-Because the official `@notionhq/client` SDK does not abstract the binary `multipart/form-data` upload step, this package handles the entire 2-step direct upload flow for you in one single, AI-optimized function call.
+A zero-dependency convenience wrapper around the Notion File Upload APIs. 
+Because the official `@notionhq/client` SDK requires manually orchestrating a multi-step fetch process (create, send, complete) with chunking for large files, this package handles the entire direct upload flow for you in one single, AI-optimized function call.
 
 ## Features
 - **Smart Multi-Part Chunking (V2):** Automatically slices files larger than 20MB into chunks and uploads them using Notion's `multi_part` API.
@@ -31,6 +30,7 @@ To use this package, you need a Notion Integration Token:
 
 ```javascript
 const { uploadToNotion } = require("notion-multipart-uploader");
+const { Client } = require("@notionhq/client");
 const fs = require("fs");
 
 async function run() {
@@ -43,26 +43,26 @@ async function run() {
         timeoutMs: 60000      // Kill request if it takes longer than 60s
     };
 
-    const fileId = await uploadToNotion(apiKey, fileBuffer, "audio/m4a", "voice-note.m4a", options);
+    // 1. Upload the binary file directly to Notion
+    const fileId = await uploadToNotion(apiKey, fileBuffer, "audio/mp4", "voice-note.m4a", options);
 
     // 2. Attach the uploaded file ID to a new Notion page block
+    const notion = new Client({ auth: apiKey });
     await notion.pages.create({
-        parent: { database_id: 'YOUR_DATABASE_ID' },
-        properties: {
-            "Name": { title: [{ text: { content: "Uploaded File" } }] }
-        },
-        children: [
-            {
-                object: 'block',
-                type: 'audio', // Or 'image', 'file', etc.
-                audio: {
-                    type: 'file_upload',
-                    file_upload: { id: fileId }
-                }
+        parent: { database_id: "your_database_id" },
+        properties: { "Title": { title: [{ text: { content: "My Voice Note" } }] } },
+        children: [{
+            object: "block",
+            type: "audio",
+            audio: {
+                type: "external",
+                external: { url: `https://www.notion.so/signed/${fileId}` } // Simplified for example
             }
-        ]
+        }]
     });
+    console.log("Success!");
 }
+run();
 ```
 
 ---

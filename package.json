@@ -14,7 +14,8 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test.js"
+    "test": "node --test test.mock.js",
+    "test:integration": "node test.js"
   },
   "keywords": [
     "notion",

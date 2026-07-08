@@ -13,11 +13,11 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     if (!apiKey) throw new Error("Notion API Key is required");
     if (!fileBuffer) throw new Error("File buffer is required");
 
-    const notionVersion = options.notionVersion || "2022-06-28";
+    const notionVersion = options.notionVersion || "2026-03-11";
     const maxRetries = options.retries || 3;
     const timeoutMs = options.timeoutMs;
     const userSignal = options.signal;
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB (allows 5GiB / 10MiB = 512 parts, well under 1000 limit)
 
     const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
     const isMultiPart = size > 20971520; // Notion's 20MB limit
@@ -29,26 +29,39 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
         for (let i = 0; i < retries; i++) {
             const controller = new AbortController();
             let timeoutId;
-            const signal = userSignal || controller.signal;
             
-            if (userSignal && userSignal.aborted) throw new Error("Upload aborted by user");
-            if (timeoutMs && !userSignal) timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            if (timeoutMs) {
+                timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            }
+
+            let abortHandler;
+            if (userSignal) {
+                if (userSignal.aborted) throw new Error("Upload aborted by user");
+                abortHandler = () => controller.abort();
+                userSignal.addEventListener("abort", abortHandler);
+            }
 
             try {
-                const res = await fetch(url, { ...fetchOptions, signal });
+                const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
                 if (timeoutId) clearTimeout(timeoutId);
+                if (userSignal && abortHandler) userSignal.removeEventListener("abort", abortHandler);
                 
                 if (res.ok) return res;
                 
                 // Notion Workspace Limit Check or Bad Request: Don't retry 4xx errors except 429 (Rate Limit)
                 if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-                    throw new Error(`Notion API Error (${res.status}): ${await res.text()}`);
+                    const error = new Error(`Notion API Error (${res.status}): ${await res.text()}`);
+                    error.isFatal = true;
+                    throw error;
                 }
                 
                 if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
             } catch (err) {
                 if (timeoutId) clearTimeout(timeoutId);
-                if (err.name === 'AbortError' && (!timeoutMs || userSignal?.aborted)) throw err; // Don't retry user aborts
+                if (userSignal && abortHandler) userSignal.removeEventListener("abort", abortHandler);
+                
+                if (err.name === 'AbortError') throw new Error(userSignal?.aborted ? "Upload aborted by user" : "Upload timed out");
+                if (err.isFatal) throw err;
                 if (i === retries - 1) throw err;
             }
             await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); 
