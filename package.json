@@ -4,6 +4,15 @@
   "description": "Native zero-dependency multipart file uploader for Notion API. Direct upload any media type (videos, phone gallery images, audio, PDFs, and binary blobs) to Notion without external hosting.",
   "main": "index.js",
   "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "node test.js"
   },

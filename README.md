@@ -7,6 +7,7 @@ Because the official `@notionhq/client` SDK does not abstract the binary `multip
 ## Features
 - **Zero Dependencies:** Uses native Node `fetch` and `FormData`.
 - **Any File Type & Media:** Works flawlessly with Videos (`.mp4`), Phone Gallery exports, Audio (`.m4a`, `.mp3`), Images (`.png`, `.jpg`), PDFs, and any raw binary buffers.
+- **Strict 20MB Limit Safety:** Automatically detects and safely rejects files over 20MB before initializing the API call to prevent Notion boundary errors.
 - **Tiny Size:** < 100 lines of code. Doesn't bloat your node_modules.
 - **TypeScript Support:** Full autocomplete out of the box with JSDoc types.
 

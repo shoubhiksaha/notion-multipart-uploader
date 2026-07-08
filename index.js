@@ -11,6 +11,11 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename) {
     if (!apiKey) throw new Error("Notion API Key is required");
     if (!fileBuffer) throw new Error("File buffer is required");
 
+    const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
+    if (size && size > 20971520) {
+        throw new Error("File exceeds Notion's 20MB direct upload limit. Multi-part chunking for larger files will be supported in v2.0.");
+    }
+
     // Step 1: Initialize the upload with Notion
     const createRes = await fetch("https://api.notion.com/v1/file_uploads", {
         method: "POST",
