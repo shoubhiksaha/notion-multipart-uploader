@@ -15,6 +15,8 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
 
     const notionVersion = options.notionVersion || "2022-06-28";
     const maxRetries = options.retries || 3;
+    const timeoutMs = options.timeoutMs;
+    const userSignal = options.signal;
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
 
     const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
@@ -22,12 +24,33 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     const mode = isMultiPart ? "multi_part" : "single_part";
     const numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
 
-    // Exponential backoff retry wrapper
+    // Exponential backoff retry wrapper with Abort/Timeout support
     const fetchWithRetry = async (url, fetchOptions, retries = maxRetries) => {
         for (let i = 0; i < retries; i++) {
-            const res = await fetch(url, fetchOptions);
-            if (res.ok) return res;
-            if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+            const controller = new AbortController();
+            let timeoutId;
+            const signal = userSignal || controller.signal;
+            
+            if (userSignal && userSignal.aborted) throw new Error("Upload aborted by user");
+            if (timeoutMs && !userSignal) timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+            try {
+                const res = await fetch(url, { ...fetchOptions, signal });
+                if (timeoutId) clearTimeout(timeoutId);
+                
+                if (res.ok) return res;
+                
+                // Notion Workspace Limit Check or Bad Request: Don't retry 4xx errors except 429 (Rate Limit)
+                if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+                    throw new Error(`Notion API Error (${res.status}): ${await res.text()}`);
+                }
+                
+                if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+            } catch (err) {
+                if (timeoutId) clearTimeout(timeoutId);
+                if (err.name === 'AbortError' && (!timeoutMs || userSignal?.aborted)) throw err; // Don't retry user aborts
+                if (i === retries - 1) throw err;
+            }
             await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); 
         }
     };

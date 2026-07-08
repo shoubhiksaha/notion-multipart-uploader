@@ -3,6 +3,10 @@ export interface UploadOptions {
     notionVersion?: string;
     /** Number of times to retry failed network requests with exponential backoff (default: 3) */
     retries?: number;
+    /** Timeout in milliseconds for each network request */
+    timeoutMs?: number;
+    /** Standard AbortSignal to cancel the upload at any time */
+    signal?: AbortSignal;
 }
 
 export declare function uploadToNotion(

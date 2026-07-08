@@ -7,6 +7,8 @@ Because the official `@notionhq/client` SDK does not abstract the binary `multip
 ## Features
 - **Smart Multi-Part Chunking (V2):** Automatically slices files larger than 20MB into chunks and uploads them using Notion's `multi_part` API.
 - **Enterprise Resilience (V2):** Built-in exponential backoff. If a chunk fails due to a network blip, it automatically pauses and retries.
+- **Cancel & Timeout Support (V2):** Pass an `AbortSignal` or `timeoutMs` to instantly kill hung uploads.
+- **Workspace Limit Safety (V2):** Instantly catches and throws clear `400` errors if your Notion Workspace is out of storage.
 - **Zero Dependencies:** Uses native Node `fetch` and `FormData`.
 - **Any File Type & Media:** Works flawlessly with Videos (`.mp4`), Phone Gallery exports, Audio (`.m4a`, `.mp3`), Images (`.png`, `.jpg`), PDFs, and any raw binary buffers.
 - **Tiny Size:** Doesn't bloat your node_modules.
@@ -18,23 +20,30 @@ Because the official `@notionhq/client` SDK does not abstract the binary `multip
 npm install notion-multipart-uploader
 ```
 
+## Getting an API Key
+To use this package, you need a Notion Integration Token:
+1. Go to [Notion's Integration Dashboard](https://www.notion.so/my-integrations).
+2. Click **New Integration**.
+3. Copy the **Internal Integration Secret** (`secret_...`).
+4. **CRITICAL:** Go to the Database page in your Notion app, click the three dots (`...`) in the top right, click **Connect to**, and select your new Integration name so it has permission to write files there!
+
 ## Usage
 
 ```javascript
-import { Client } from '@notionhq/client';
-import { uploadToNotion } from 'notion-multipart-uploader';
+const { uploadToNotion } = require("notion-multipart-uploader");
+const fs = require("fs");
 
-const NOTION_KEY = process.env.NOTION_KEY;
-const notion = new Client({ auth: NOTION_KEY });
+async function run() {
+    const fileBuffer = fs.readFileSync("./voice-note.m4a");
+    const apiKey = "secret_yourNotionApiKeyHere";
 
-async function saveFileToNotion(binaryBuffer) {
-    // 1. Upload the binary file directly to Notion
-    const fileId = await uploadToNotion(
-        NOTION_KEY, 
-        binaryBuffer, 
-        "audio/mp4", // Or 'image/png', 'application/pdf', etc.
-        "voice-note.m4a"
-    );
+    // V2: You can now pass Advanced Options
+    const options = {
+        retries: 5,           // Auto-retry network failures 5 times
+        timeoutMs: 60000      // Kill request if it takes longer than 60s
+    };
+
+    const fileId = await uploadToNotion(apiKey, fileBuffer, "audio/m4a", "voice-note.m4a", options);
 
     // 2. Attach the uploaded file ID to a new Notion page block
     await notion.pages.create({
