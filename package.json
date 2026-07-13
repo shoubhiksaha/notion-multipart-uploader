@@ -1,6 +1,6 @@
 {
   "name": "notion-multipart-uploader",
-  "version": "2.1.4",
+  "version": "2.2.0",
   "description": "Native zero-dependency multipart file uploader for Notion API. Direct upload any media type (videos, phone gallery images, audio, PDFs, and binary blobs) to Notion without external hosting.",
   "main": "index.js",
   "types": "index.d.ts",
