@@ -122,28 +122,41 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
         return id;
     }
 
-    // Multi-part chunked upload
-    for (let part = 0; part < numParts; part++) {
-        const start = part * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, size);
-        
-        // Handle slice for both Buffer and Blob
-        const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
+    // Multi-part chunked upload (Concurrent Promise Pool)
+    const concurrency = options.concurrency || 3;
+    let currentPart = 0;
 
-        const form = new FormData();
-        const blob = new Blob([chunk], { type: mimeType });
-        form.append("file", blob, filename || "uploaded-file");
-        form.append("part_number", (part + 1).toString()); // 1-indexed
+    const uploadWorker = async () => {
+        while (currentPart < numParts) {
+            const part = currentPart++; // Atomically grab the next chunk index
+            const start = part * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, size);
+            
+            // Handle slice for both Buffer and Blob
+            const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
 
-        await fetchWithRetry(upload_url, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${apiKey}`,
-                "Notion-Version": notionVersion
-            },
-            body: form
-        });
+            const form = new FormData();
+            const blob = new Blob([chunk], { type: mimeType });
+            form.append("file", blob, filename || "uploaded-file");
+            form.append("part_number", (part + 1).toString()); // 1-indexed
+
+            await fetchWithRetry(upload_url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Notion-Version": notionVersion
+                },
+                body: form
+            });
+        }
+    };
+
+    // Spin up multiple workers to process chunks in parallel
+    const workers = [];
+    for (let i = 0; i < Math.min(concurrency, numParts); i++) {
+        workers.push(uploadWorker());
     }
+    await Promise.all(workers);
 
     // Step 3: Complete multi-part upload
     const targetCompleteUrl = complete_url || `https://api.notion.com/v1/file_uploads/${id}/complete`;
