@@ -127,8 +127,11 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     let currentPart = 0;
 
     const uploadWorker = async () => {
-        while (currentPart < numParts) {
-            const part = currentPart++; // Atomically grab the next chunk index
+        while (true) {
+            // Atomically claim the next part index before any await
+            const part = currentPart++;
+            if (part >= numParts) break; // Guard: stop if no more parts remain
+
             const start = part * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, size);
             

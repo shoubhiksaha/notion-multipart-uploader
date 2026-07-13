@@ -10,12 +10,13 @@ A zero-dependency convenience wrapper around the Notion File Upload APIs.
 
 ## Features
 
-- Smart multi-part chunking for large files
-- Automatic retry with exponential backoff
-- AbortSignal and timeout support
-- Clear errors for common Notion workspace/storage failures
-- Zero dependencies (native `fetch` / `FormData`)
-- Works with audio, video, images, PDFs, and binary buffers
+- **Smart multi-part chunking** for files up to 5GB (paid Notion workspaces)
+- **Concurrent uploads** — upload multiple chunks simultaneously (default: 3 parallel workers)
+- **Exponential backoff** retries for network resilience
+- **AbortSignal and timeout** support for cancellable uploads
+- **Fatal error detection** — 4xx errors are never retried (prevents infinite loops on billing limits)
+- **Zero dependencies** — native `fetch` / `FormData` only
+- Works with audio, video, images, PDFs, and any binary buffer
 
 ## Installation
 
@@ -39,7 +40,11 @@ async function run() {
     fileBuffer,
     "audio/mp4",
     "voice-note.m4a",
-    { retries: 5, timeoutMs: 60000 }
+    {
+      retries: 5,        // Auto-retry network failures 5 times
+      timeoutMs: 60000,  // Kill request if it hangs for 60s
+      concurrency: 3     // Upload 3 chunks simultaneously (for large files)
+    }
   );
 
   const notion = new Client({ auth: apiKey });

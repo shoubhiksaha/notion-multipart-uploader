@@ -84,3 +84,30 @@ test('Mock: 400 Bad Request triggers fatal error, no retries', async () => {
         assert.strictEqual(fetchCount, 1); // Only tried once, no retries
     }
 });
+
+test('Mock: concurrency option causes parallel chunk uploads', async () => {
+    let maxInFlight = 0;
+    let currentInFlight = 0;
+
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) {
+            return { ok: true, json: async () => ({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" }) };
+        }
+        if (url === 'mock-url') {
+            currentInFlight++;
+            maxInFlight = Math.max(maxInFlight, currentInFlight);
+            // Simulate real network latency so workers genuinely overlap
+            await new Promise(r => setTimeout(r, 10));
+            currentInFlight--;
+            return { ok: true };
+        }
+        if (url === 'mock-complete') return { ok: true };
+        return { ok: true };
+    };
+
+    // 30MB = 3 chunks of 10MB each; with concurrency:3 all 3 should fire at once
+    const bigBuffer = Buffer.alloc(30 * 1024 * 1024);
+    await uploadToNotion("dummy-key", bigBuffer, "text/plain", "big.txt", { concurrency: 3 });
+
+    assert.ok(maxInFlight > 1, `Expected >1 concurrent uploads, got max ${maxInFlight}`);
+});
