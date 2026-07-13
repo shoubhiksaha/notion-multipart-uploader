@@ -7,6 +7,8 @@ export interface UploadOptions {
     timeoutMs?: number;
     /** Standard AbortSignal to cancel the upload at any time */
     signal?: AbortSignal;
+    /** Number of chunks to upload simultaneously for massive files (default: 3) */
+    concurrency?: number;
 }
 
 export declare function uploadToNotion(
