@@ -28,13 +28,19 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     const isMultiPart = size > 20971520; // Notion's 20MB limit
     const mode = isMultiPart ? "multi_part" : "single_part";
     
-    // Default to 10MB chunks, but dynamically scale up if we hit the 1000 part limit
-    let CHUNK_SIZE = 10 * 1024 * 1024;
+    // Notion API hard constraints (from official docs):
+    // Each part must be ≥ 5 MiB and ≤ 20 MiB (except the final part, which can be < 5 MiB)
+    // Recommended chunk size is 10 MiB.
+    const MIN_CHUNK_SIZE = 5 * 1024 * 1024;   // 5 MiB — Notion's documented minimum
+    const MAX_PARTS = 1000;                     // Practical upper bound
+
+    let CHUNK_SIZE = 10 * 1024 * 1024;         // 10 MiB — Notion's recommended default
     let numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
 
-    if (numParts > 1000) {
-        CHUNK_SIZE = Math.ceil(size / 1000);
-        numParts = 1000;
+    if (numParts > MAX_PARTS) {
+        // Scale chunk size up, but never below Notion's 5 MiB minimum per part
+        CHUNK_SIZE = Math.max(Math.ceil(size / MAX_PARTS), MIN_CHUNK_SIZE);
+        numParts = Math.ceil(size / CHUNK_SIZE);
     }
 
     // Exponential backoff retry wrapper with Abort/Timeout support
