@@ -67,6 +67,14 @@ async function run() {
 run();
 ```
 
+## Legacy Lightweight Version
+
+If you are only uploading very small files (< 20MB) and want the absolute leanest version of this package without the multipart chunking or concurrency logic, you can install the legacy `v1.0.1`:
+
+```bash
+npm install notion-multipart-uploader@1.0.1
+```
+
 ## License
 
 MIT
