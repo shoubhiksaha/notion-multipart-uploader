@@ -2,11 +2,10 @@
   "name": "notion-multipart-uploader",
   "version": "2.2.3",
   "description": "Native zero-dependency multipart file uploader for Notion API. Direct upload any media type (videos, phone gallery images, audio, PDFs, and binary blobs) to Notion without external hosting.",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
-    "index.js",
-    "index.d.ts",
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -14,7 +13,9 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test test.mock.js",
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node --test test.mock.js",
     "test:integration": "node test.js"
   },
   "keywords": [
@@ -42,5 +43,9 @@
     "url": "https://github.com/shoubhiksaha/notion-multipart-uploader/issues"
   },
   "homepage": "https://github.com/shoubhiksaha/notion-multipart-uploader#readme",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
 }

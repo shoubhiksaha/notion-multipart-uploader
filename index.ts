@@ -1,0 +1,205 @@
+export interface UploadOptions {
+    /** Override the default Notion API version (default: '2026-03-11') */
+    notionVersion?: string;
+    /** Number of times to retry failed network requests with exponential backoff (default: 3) */
+    retries?: number;
+    /** Timeout in milliseconds for each network request */
+    timeoutMs?: number;
+    /** Standard AbortSignal to cancel the upload at any time */
+    signal?: AbortSignal;
+    /** Number of chunks to upload simultaneously for massive files (default: 3) */
+    concurrency?: number;
+}
+
+/**
+ * Uploads a binary file directly to Notion's servers using native fetch.
+ * Automatically handles single-part (<= 20MB) and multi-part (> 20MB) chunking.
+ * 
+ * @param apiKey - Your Notion Integration Token
+ * @param fileBuffer - The binary data of the file (audio, image, pdf, etc.)
+ * @param mimeType - e.g., 'audio/mp4', 'image/jpeg', 'application/pdf'
+ * @param filename - The name of the file (e.g., 'voice-note.m4a')
+ * @param options - Additional options like retries or Notion API version
+ * @returns The Notion File ID to use in your blocks
+ */
+export async function uploadToNotion(
+    apiKey: string,
+    fileBuffer: Uint8Array | Blob | any,
+    mimeType: string,
+    filename?: string,
+    options: UploadOptions = {}
+): Promise<string> {
+    if (!apiKey) throw new Error("Notion API Key is required");
+    if (!fileBuffer) throw new Error("File buffer is required");
+
+    const notionVersion = options.notionVersion || "2026-03-11";
+    const maxRetries = options.retries || 3;
+    const timeoutMs = options.timeoutMs;
+    const userSignal = options.signal;
+
+    const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
+    
+    // Notion strictly limits files to 5GB (paid workspaces)
+    if (size > 5 * 1024 * 1024 * 1024) {
+        throw new Error("File exceeds Notion's absolute maximum size limit of 5GB.");
+    }
+
+    const isMultiPart = size > 20971520; // Notion's 20MB limit
+    const mode = isMultiPart ? "multi_part" : "single_part";
+    
+    // Notion API hard constraints (from official docs):
+    // Each part must be ≥ 5 MiB and ≤ 20 MiB (except the final part, which can be < 5 MiB)
+    // Recommended chunk size is 10 MiB.
+    const MIN_CHUNK_SIZE = 5 * 1024 * 1024;   // 5 MiB — Notion's documented minimum
+    const MAX_PARTS = 1000;                     // Practical upper bound
+
+    let CHUNK_SIZE = 10 * 1024 * 1024;         // 10 MiB — Notion's recommended default
+    let numParts = isMultiPart ? Math.ceil(size / CHUNK_SIZE) : 1;
+
+    if (numParts > MAX_PARTS) {
+        // Scale chunk size up, but never below Notion's 5 MiB minimum per part
+        CHUNK_SIZE = Math.max(Math.ceil(size / MAX_PARTS), MIN_CHUNK_SIZE);
+        numParts = Math.ceil(size / CHUNK_SIZE);
+    }
+
+    // Exponential backoff retry wrapper with Abort/Timeout support
+    const fetchWithRetry = async (url: string, fetchOptions: RequestInit, retries = maxRetries): Promise<Response> => {
+        for (let i = 0; i < retries; i++) {
+            const controller = new AbortController();
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            
+            if (timeoutMs) {
+                timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            }
+
+            let abortHandler: (() => void) | undefined;
+            if (userSignal) {
+                if (userSignal.aborted) throw new Error("Upload aborted by user");
+                abortHandler = () => controller.abort();
+                userSignal.addEventListener("abort", abortHandler);
+            }
+
+            try {
+                const res = await fetch(url, { ...fetchOptions, signal: controller.signal });
+                if (timeoutId) clearTimeout(timeoutId);
+                if (userSignal && abortHandler) userSignal.removeEventListener("abort", abortHandler);
+                
+                if (res.ok) return res;
+                
+                // Notion Workspace Limit Check or Bad Request: Don't retry 4xx errors except 429 (Rate Limit)
+                if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+                    const error: any = new Error(`Notion API Error (${res.status}): ${await res.text()}`);
+                    error.isFatal = true;
+                    throw error;
+                }
+                
+                if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+            } catch (err: any) {
+                if (timeoutId) clearTimeout(timeoutId);
+                if (userSignal && abortHandler) userSignal.removeEventListener("abort", abortHandler);
+                
+                if (err.name === 'AbortError') throw new Error(userSignal?.aborted ? "Upload aborted by user" : "Upload timed out");
+                if (err.isFatal) throw err;
+                if (i === retries - 1) throw err;
+            }
+            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); 
+        }
+        throw new Error("Unreachable");
+    };
+
+    const createBody: any = {
+        filename: filename || "uploaded-file",
+        content_type: mimeType,
+        mode: mode
+    };
+    if (isMultiPart) {
+        createBody.number_of_parts = numParts;
+    }
+
+    // Step 1: Initialize the upload with Notion
+    const createRes = await fetchWithRetry("https://api.notion.com/v1/file_uploads", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "Notion-Version": notionVersion
+        },
+        body: JSON.stringify(createBody)
+    });
+
+    const createData = await createRes.json();
+    const { id, upload_url, complete_url } = createData;
+
+    // Step 2: Upload the binary data
+    if (!isMultiPart) {
+        // Single-part upload
+        const form = new FormData();
+        const blob = new Blob([fileBuffer], { type: mimeType });
+        form.append("file", blob, filename || "uploaded-file");
+
+        await fetchWithRetry(upload_url, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Notion-Version": notionVersion
+            },
+            body: form
+        });
+        return id;
+    }
+
+    // Multi-part chunked upload (Concurrent Promise Pool)
+    const concurrency = options.concurrency || 3;
+    let currentPart = 0;
+
+    const uploadWorker = async () => {
+        while (true) {
+            // Atomically claim the next part index before any await
+            const part = currentPart++;
+            if (part >= numParts) break; // Guard: stop if no more parts remain
+
+            const start = part * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, size);
+            
+            // Handle slice for both Buffer and Blob
+            const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
+
+            const form = new FormData();
+            const blob = new Blob([chunk], { type: mimeType });
+            form.append("file", blob, filename || "uploaded-file");
+            form.append("part_number", (part + 1).toString()); // 1-indexed
+
+            await fetchWithRetry(upload_url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${apiKey}`,
+                    "Notion-Version": notionVersion
+                },
+                body: form
+            });
+        }
+    };
+
+    // Spin up multiple workers to process chunks in parallel
+    const workers: Promise<void>[] = [];
+    for (let i = 0; i < Math.min(concurrency, numParts); i++) {
+        workers.push(uploadWorker());
+    }
+    await Promise.all(workers);
+
+    // Step 3: Complete multi-part upload
+    const targetCompleteUrl = complete_url || `https://api.notion.com/v1/file_uploads/${id}/complete`;
+    await fetchWithRetry(targetCompleteUrl, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            "Notion-Version": notionVersion
+        },
+        body: JSON.stringify({})
+    });
+
+    return id;
+}
+
+// Export handled by `export async function uploadToNotion`

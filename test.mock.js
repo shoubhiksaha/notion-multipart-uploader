@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { uploadToNotion } = require('./index.js');
+const { uploadToNotion } = require('./dist/index.js');
 
 test('Mock: Single part upload (<20MB) validates body', async () => {
     let createBody;
