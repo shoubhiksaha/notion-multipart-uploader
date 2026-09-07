@@ -35,11 +35,15 @@ export async function uploadToNotion(
     if (!fileBuffer) throw new Error("File buffer is required");
 
     const notionVersion = options.notionVersion || "2026-03-11";
-    const maxRetries = options.retries || 3;
+    const maxRetries = Math.max(0, options.retries ?? 3);
+    const totalAttempts = maxRetries + 1;
     const timeoutMs = options.timeoutMs;
     const userSignal = options.signal;
 
-    const size = fileBuffer.length || fileBuffer.size || fileBuffer.byteLength;
+    const size = fileBuffer.size ?? fileBuffer.length ?? fileBuffer.byteLength;
+    if (typeof size !== "number" || size <= 0) {
+        throw new Error("File buffer is empty");
+    }
     
     // Notion strictly limits files to 5GB (paid workspaces)
     if (size > 5 * 1024 * 1024 * 1024) {
@@ -65,8 +69,8 @@ export async function uploadToNotion(
     }
 
     // Exponential backoff retry wrapper with Abort/Timeout support
-    const fetchWithRetry = async (url: string, fetchOptions: RequestInit, retries = maxRetries): Promise<Response> => {
-        for (let i = 0; i < retries; i++) {
+    const fetchWithRetry = async (url: string, fetchOptions: RequestInit, attempts = totalAttempts): Promise<Response> => {
+        for (let i = 0; i < attempts; i++) {
             const controller = new AbortController();
             let timeoutId: ReturnType<typeof setTimeout> | undefined;
             
@@ -95,14 +99,14 @@ export async function uploadToNotion(
                     throw error;
                 }
                 
-                if (i === retries - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+                if (i === attempts - 1) throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
             } catch (err: any) {
                 if (timeoutId) clearTimeout(timeoutId);
                 if (userSignal && abortHandler) userSignal.removeEventListener("abort", abortHandler);
                 
                 if (err.name === 'AbortError') throw new Error(userSignal?.aborted ? "Upload aborted by user" : "Upload timed out");
                 if (err.isFatal) throw err;
-                if (i === retries - 1) throw err;
+                if (i === attempts - 1) throw err;
             }
             await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i))); 
         }
@@ -169,7 +173,7 @@ export async function uploadToNotion(
     }
 
     // Multi-part chunked upload (Concurrent Promise Pool)
-    const concurrency = options.concurrency || 3;
+    const concurrency = Math.max(1, options.concurrency ?? 3);
     let currentPart = 0;
     let uploadedBytes = 0;
 

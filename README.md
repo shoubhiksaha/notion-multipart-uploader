@@ -74,6 +74,8 @@ run();
 
 ### React / Frontend Progress Bar Example
 
+> ⚠️ **Security Warning:** Notion API integration tokens (`secret_...`) are sensitive server credentials. Never hardcode or leak them into client-side browser bundles in production. In production web apps, have your backend proxy the upload initialization or use a server endpoint to complete the Notion blocks.
+
 ```tsx
 import React, { useState } from "react";
 import { uploadToNotion } from "notion-multipart-uploader";
@@ -93,6 +95,9 @@ export function FileUploader({ notionApiKey }: { notionApiKey: string }) {
       file.type,
       file.name,
       {
+        // When using concurrency > 1, chunks upload in parallel and progress 
+        // increments as each chunk completes.
+        concurrency: 3,
         onProgress: (uploaded, total) => {
           setProgress(Math.round((uploaded / total) * 100));
         }

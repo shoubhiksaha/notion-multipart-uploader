@@ -177,3 +177,47 @@ test('Mock: onProgress callback error does not break upload', async () => {
     assert.strictEqual(id, "mock-id");
 });
 
+test('Mock: Empty buffer throws clear error', async () => {
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.alloc(0), "text/plain", "empty.txt"),
+        { message: "File buffer is empty" }
+    );
+});
+
+test('Mock: retries: 0 attempts exactly once on failure without retrying', async () => {
+    let attempts = 0;
+    global.fetch = async () => {
+        attempts++;
+        return { ok: false, status: 500, text: async () => "Internal Server Error" };
+    };
+
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("data"), "text/plain", "test.txt", { retries: 0 }),
+        (err) => {
+            assert.ok(err.message.includes("Notion API Failed (500)"));
+            return true;
+        }
+    );
+    assert.strictEqual(attempts, 1, `Expected exactly 1 attempt, but got ${attempts}`);
+});
+
+test('Mock: concurrency: 0 safely defaults to at least 1 worker', async () => {
+    let partsReceived = 0;
+    global.fetch = async (url) => {
+        if (url.endsWith('file_uploads')) {
+            return { ok: true, json: async () => ({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" }) };
+        }
+        if (url === 'mock-url') {
+            partsReceived++;
+            return { ok: true };
+        }
+        if (url === 'mock-complete') return { ok: true };
+        return { ok: true };
+    };
+
+    const bigBuffer = Buffer.alloc(21 * 1024 * 1024);
+    const id = await uploadToNotion("dummy-key", bigBuffer, "text/plain", "big.txt", { concurrency: 0 });
+    assert.strictEqual(id, "mock-id");
+    assert.strictEqual(partsReceived, 3);
+});
+
