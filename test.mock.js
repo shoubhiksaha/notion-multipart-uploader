@@ -111,3 +111,69 @@ test('Mock: concurrency option causes parallel chunk uploads', async () => {
 
     assert.ok(maxInFlight > 1, `Expected >1 concurrent uploads, got max ${maxInFlight}`);
 });
+
+test('Mock: onProgress callback tracks progress in single-part upload', async () => {
+    global.fetch = async (url, options) => {
+        if (url.includes('file_uploads')) {
+            return { ok: true, json: async () => ({ id: "mock-id", upload_url: "mock-url" }) };
+        }
+        return { ok: true };
+    };
+
+    const progressUpdates = [];
+    const buf = Buffer.from("hello world");
+    const id = await uploadToNotion("dummy-key", buf, "text/plain", "test.txt", {
+        onProgress: (uploaded, total) => progressUpdates.push({ uploaded, total })
+    });
+
+    assert.strictEqual(id, "mock-id");
+    assert.deepStrictEqual(progressUpdates, [
+        { uploaded: 0, total: buf.length },
+        { uploaded: buf.length, total: buf.length }
+    ]);
+});
+
+test('Mock: onProgress callback tracks chunk increments in multi-part upload', async () => {
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) {
+            return { ok: true, json: async () => ({ id: "mock-multi-id", upload_url: "mock-url", complete_url: "mock-complete" }) };
+        }
+        return { ok: true };
+    };
+
+    const progressUpdates = [];
+    // 25MB = 3 parts (10MB, 10MB, 5MB)
+    const totalSize = 25 * 1024 * 1024;
+    const bigBuffer = Buffer.alloc(totalSize);
+
+    const id = await uploadToNotion("dummy-key", bigBuffer, "application/pdf", "large.pdf", {
+        concurrency: 1, // Sequential for deterministic assertion
+        onProgress: (uploaded, total) => progressUpdates.push({ uploaded, total })
+    });
+
+    assert.strictEqual(id, "mock-multi-id");
+    assert.strictEqual(progressUpdates[0].uploaded, 0);
+    assert.strictEqual(progressUpdates[0].total, totalSize);
+    // Final update must be 100% (uploaded === total)
+    assert.strictEqual(progressUpdates[progressUpdates.length - 1].uploaded, totalSize);
+    assert.strictEqual(progressUpdates[progressUpdates.length - 1].total, totalSize);
+    assert.strictEqual(progressUpdates.length, 4); // 0MB, 10MB, 20MB, 25MB
+});
+
+test('Mock: onProgress callback error does not break upload', async () => {
+    global.fetch = async (url, options) => {
+        if (url.includes('file_uploads')) {
+            return { ok: true, json: async () => ({ id: "mock-id", upload_url: "mock-url" }) };
+        }
+        return { ok: true };
+    };
+
+    const id = await uploadToNotion("dummy-key", Buffer.from("hello"), "text/plain", "test.txt", {
+        onProgress: () => {
+            throw new Error("UI callback exploded!");
+        }
+    });
+
+    assert.strictEqual(id, "mock-id");
+});
+

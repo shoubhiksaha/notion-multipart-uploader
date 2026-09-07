@@ -9,6 +9,8 @@ export interface UploadOptions {
     signal?: AbortSignal;
     /** Number of chunks to upload simultaneously for massive files (default: 3) */
     concurrency?: number;
+    /** Callback reporting upload progress in bytes: (uploadedBytes, totalBytes) => void */
+    onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }
 
 /**
@@ -130,6 +132,15 @@ export async function uploadToNotion(
     const createData = await createRes.json();
     const { id, upload_url, complete_url } = createData;
 
+    // Notify initial progress if callback provided
+    if (options.onProgress) {
+        try {
+            options.onProgress(0, size);
+        } catch {
+            // Ignore errors thrown in user callback
+        }
+    }
+
     // Step 2: Upload the binary data
     if (!isMultiPart) {
         // Single-part upload
@@ -145,12 +156,22 @@ export async function uploadToNotion(
             },
             body: form
         });
+
+        if (options.onProgress) {
+            try {
+                options.onProgress(size, size);
+            } catch {
+                // Ignore errors thrown in user callback
+            }
+        }
+
         return id;
     }
 
     // Multi-part chunked upload (Concurrent Promise Pool)
     const concurrency = options.concurrency || 3;
     let currentPart = 0;
+    let uploadedBytes = 0;
 
     const uploadWorker = async () => {
         while (true) {
@@ -160,6 +181,7 @@ export async function uploadToNotion(
 
             const start = part * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, size);
+            const chunkSize = end - start;
             
             // Handle slice for both Buffer and Blob
             const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
@@ -177,6 +199,15 @@ export async function uploadToNotion(
                 },
                 body: form
             });
+
+            uploadedBytes += chunkSize;
+            if (options.onProgress) {
+                try {
+                    options.onProgress(uploadedBytes, size);
+                } catch {
+                    // Ignore errors thrown in user callback
+                }
+            }
         }
     };
 

@@ -9,6 +9,8 @@ export interface UploadOptions {
     signal?: AbortSignal;
     /** Number of chunks to upload simultaneously for massive files (default: 3) */
     concurrency?: number;
+    /** Callback reporting upload progress in bytes: (uploadedBytes, totalBytes) => void */
+    onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }
 /**
  * Uploads a binary file directly to Notion's servers using native fetch.

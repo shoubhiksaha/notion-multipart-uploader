@@ -12,6 +12,7 @@ A zero-dependency convenience wrapper around the Notion File Upload APIs.
 
 - **Smart multi-part chunking** for files up to 5GB (paid Notion workspaces)
 - **Concurrent uploads** — upload multiple chunks simultaneously (default: 3 parallel workers)
+- **Real-time upload progress** via `onProgress(uploadedBytes, totalBytes)` callback — hook directly to frontend progress bars
 - **Exponential backoff** retries for network resilience
 - **AbortSignal and timeout** support for cancellable uploads
 - **Fatal error detection** — 4xx errors are never retried (prevents infinite loops on billing limits)
@@ -32,18 +33,22 @@ const { Client } = require("@notionhq/client");
 const fs = require("fs");
 
 async function run() {
-  const fileBuffer = fs.readFileSync("./voice-note.m4a");
+  const fileBuffer = fs.readFileSync("./large-document.pdf");
   const apiKey = "secret_yourNotionApiKeyHere";
 
   const fileId = await uploadToNotion(
     apiKey,
     fileBuffer,
-    "audio/mp4",
-    "voice-note.m4a",
+    "application/pdf",
+    "large-document.pdf",
     {
       retries: 5,        // Auto-retry network failures 5 times
       timeoutMs: 60000,  // Kill request if it hangs for 60s
-      concurrency: 3     // Upload 3 chunks simultaneously (for large files)
+      concurrency: 3,    // Upload 3 chunks simultaneously (for large files)
+      onProgress: (uploadedBytes, totalBytes) => {
+        const percent = Math.round((uploadedBytes / totalBytes) * 100);
+        console.log(`Uploading: ${percent}% (${uploadedBytes}/${totalBytes} bytes)`);
+      }
     }
   );
 
@@ -51,12 +56,12 @@ async function run() {
   await notion.pages.create({
     parent: { database_id: "your_database_id" },
     properties: {
-      Title: { title: [{ text: { content: "My Voice Note" } }] }
+      Title: { title: [{ text: { content: "My Uploaded PDF" } }] }
     },
     children: [{
       object: "block",
-      type: "audio",
-      audio: {
+      type: "pdf",
+      pdf: {
         type: "file_upload",
         file_upload: { id: fileId }
       }
@@ -65,6 +70,46 @@ async function run() {
 }
 
 run();
+```
+
+### React / Frontend Progress Bar Example
+
+```tsx
+import React, { useState } from "react";
+import { uploadToNotion } from "notion-multipart-uploader";
+
+export function FileUploader({ notionApiKey }: { notionApiKey: string }) {
+  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState<string>("");
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setStatus("Uploading...");
+    const fileId = await uploadToNotion(
+      notionApiKey,
+      file,
+      file.type,
+      file.name,
+      {
+        onProgress: (uploaded, total) => {
+          setProgress(Math.round((uploaded / total) * 100));
+        }
+      }
+    );
+    setStatus(`Uploaded! Notion File ID: ${fileId}`);
+  };
+
+  return (
+    <div>
+      <input type="file" onChange={handleUpload} />
+      {progress > 0 && <progress value={progress} max="100" />}
+      <span>{progress}%</span>
+      <p>{status}</p>
+    </div>
+  );
+}
 ```
 
 ## Legacy Lightweight Version
