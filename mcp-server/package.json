@@ -1,0 +1,17 @@
+{
+  "name": "notion-large-file-upload-mcp",
+  "version": "1.0.0",
+  "description": "Use when a local file exceeds Notion MCP’s 20 MiB upload limit.",
+  "main": "index.js",
+  "bin": {
+    "notion-large-file-upload-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.1",
+    "notion-multipart-uploader": "file:../",
+    "@notionhq/client": "^2.2.14"
+  }
+}

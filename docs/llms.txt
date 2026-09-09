@@ -1,0 +1,8 @@
+# notion-multipart-uploader Docs
+
+Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.
+
+- [Uploading large files (Node.js)](upload-large-files.md)
+- [Attaching files to Notion](attach-to-notion.md)
+- [Using with AI Agents and MCP](ai-agents-mcp.md)
+- [Difference from @notionhq/client](differences-from-sdk.md)

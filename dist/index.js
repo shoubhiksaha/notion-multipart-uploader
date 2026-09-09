@@ -1,6 +1,27 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.uploadFile = uploadFile;
 exports.uploadToNotion = uploadToNotion;
+const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
+/**
+ * Uploads a local file from disk to Notion's servers (Node.js only).
+ * Uses bounded memory chunk reads to support files up to 5GB without memory bloat.
+ *
+ * @param apiKey - Your Notion Integration Token
+ * @param filePath - The absolute or relative path to the file on disk
+ * @param mimeType - e.g., 'audio/mp4', 'image/jpeg', 'application/pdf'
+ * @param options - Additional options like retries or Notion API version
+ * @returns The Notion File ID to use in your blocks
+ */
+async function uploadFile(apiKey, filePath, mimeType, options = {}) {
+    if (!isNode)
+        throw new Error("uploadFile is only supported in Node.js environments. For browsers, use uploadToNotion.");
+    const fs = await import('fs/promises');
+    const pathModule = await import('path');
+    const stat = await fs.stat(filePath);
+    const filename = pathModule.basename(filePath);
+    return uploadToNotionInternal(apiKey, { type: 'path', filePath, size: stat.size }, mimeType, filename, options);
+}
 /**
  * Uploads a binary file directly to Notion's servers using native fetch.
  * Automatically handles single-part (<= 20MB) and multi-part (> 20MB) chunking.
@@ -13,28 +34,27 @@ exports.uploadToNotion = uploadToNotion;
  * @returns The Notion File ID to use in your blocks
  */
 async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = {}) {
+    const size = fileBuffer.size ?? fileBuffer.length ?? fileBuffer.byteLength;
+    if (typeof size !== "number" || size <= 0) {
+        throw new Error("File buffer is empty");
+    }
+    return uploadToNotionInternal(apiKey, { type: 'buffer', buffer: fileBuffer, size }, mimeType, filename || "uploaded-file", options);
+}
+async function uploadToNotionInternal(apiKey, source, mimeType, filename, options) {
     if (!apiKey)
         throw new Error("Notion API Key is required");
-    if (!fileBuffer)
-        throw new Error("File buffer is required");
     const notionVersion = options.notionVersion || "2026-03-11";
     const maxRetries = Math.max(0, options.retries ?? 3);
     const totalAttempts = maxRetries + 1;
     const timeoutMs = options.timeoutMs;
     const userSignal = options.signal;
-    const size = fileBuffer.size ?? fileBuffer.length ?? fileBuffer.byteLength;
-    if (typeof size !== "number" || size <= 0) {
-        throw new Error("File buffer is empty");
-    }
+    const size = source.size;
     // Notion strictly limits files to 5GB (paid workspaces)
     if (size > 5 * 1024 * 1024 * 1024) {
         throw new Error("File exceeds Notion's absolute maximum size limit of 5GB.");
     }
     const isMultiPart = size > 20971520; // Notion's 20MB limit
     const mode = isMultiPart ? "multi_part" : "single_part";
-    // Notion API hard constraints (from official docs):
-    // Each part must be ≥ 5 MiB and ≤ 20 MiB (except the final part, which can be < 5 MiB)
-    // Recommended chunk size is 10 MiB.
     const MIN_CHUNK_SIZE = 5 * 1024 * 1024; // 5 MiB — Notion's documented minimum
     const MAX_PARTS = 1000; // Practical upper bound
     let CHUNK_SIZE = 10 * 1024 * 1024; // 10 MiB — Notion's recommended default
@@ -44,7 +64,7 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
         CHUNK_SIZE = Math.max(Math.ceil(size / MAX_PARTS), MIN_CHUNK_SIZE);
         numParts = Math.ceil(size / CHUNK_SIZE);
     }
-    // Exponential backoff retry wrapper with Abort/Timeout support
+    // Exponential backoff retry wrapper with Abort/Timeout, Jitter, and Retry-After support
     const fetchWithRetry = async (url, fetchOptions, attempts = totalAttempts) => {
         for (let i = 0; i < attempts; i++) {
             const controller = new AbortController();
@@ -67,7 +87,7 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
                     userSignal.removeEventListener("abort", abortHandler);
                 if (res.ok)
                     return res;
-                // Notion Workspace Limit Check or Bad Request: Don't retry 4xx errors except 429 (Rate Limit)
+                // Retry only on Rate Limits (429) and Server Overload/Unavailable (5xx)
                 if (res.status >= 400 && res.status < 500 && res.status !== 429) {
                     const error = new Error(`Notion API Error (${res.status}): ${await res.text()}`);
                     error.isFatal = true;
@@ -75,6 +95,18 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
                 }
                 if (i === attempts - 1)
                     throw new Error(`Notion API Failed (${res.status}): ${await res.text()}`);
+                // Calculate delay: Respect Retry-After header if present, otherwise exponential backoff with jitter
+                let delayMs = 1000 * Math.pow(2, i);
+                const retryAfter = res.headers.get('Retry-After');
+                if (retryAfter) {
+                    const parsed = parseInt(retryAfter, 10);
+                    if (!isNaN(parsed)) {
+                        delayMs = parsed * 1000;
+                    }
+                }
+                // Add jitter to avoid thundering herd problem
+                const jitter = Math.random() * 1000;
+                await new Promise(r => setTimeout(r, delayMs + jitter));
             }
             catch (err) {
                 if (timeoutId)
@@ -87,13 +119,16 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
                     throw err;
                 if (i === attempts - 1)
                     throw err;
+                // Delay for network failures
+                const delayMs = 1000 * Math.pow(2, i);
+                const jitter = Math.random() * 1000;
+                await new Promise(r => setTimeout(r, delayMs + jitter));
             }
-            await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
         }
         throw new Error("Unreachable");
     };
     const createBody = {
-        filename: filename || "uploaded-file",
+        filename: filename,
         content_type: mimeType,
         mode: mode
     };
@@ -112,21 +147,38 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     });
     const createData = await createRes.json();
     const { id, upload_url, complete_url } = createData;
-    // Notify initial progress if callback provided
     if (options.onProgress) {
         try {
             options.onProgress(0, size);
         }
-        catch {
-            // Ignore errors thrown in user callback
-        }
+        catch { }
     }
+    // Helper to get chunk as Blob
+    const getChunkBlob = async (start, end) => {
+        if (source.type === 'buffer') {
+            const fileBuffer = source.buffer;
+            const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
+            return new Blob([chunk], { type: mimeType });
+        }
+        else {
+            const fs = await import('fs/promises');
+            const fileHandle = await fs.open(source.filePath, 'r');
+            try {
+                const length = end - start;
+                const buffer = Buffer.alloc(length);
+                await fileHandle.read(buffer, 0, length, start);
+                return new Blob([buffer], { type: mimeType });
+            }
+            finally {
+                await fileHandle.close();
+            }
+        }
+    };
     // Step 2: Upload the binary data
     if (!isMultiPart) {
-        // Single-part upload
         const form = new FormData();
-        const blob = new Blob([fileBuffer], { type: mimeType });
-        form.append("file", blob, filename || "uploaded-file");
+        const blob = await getChunkBlob(0, size);
+        form.append("file", blob, filename);
         await fetchWithRetry(upload_url, {
             method: "POST",
             headers: {
@@ -139,9 +191,7 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
             try {
                 options.onProgress(size, size);
             }
-            catch {
-                // Ignore errors thrown in user callback
-            }
+            catch { }
         }
         return id;
     }
@@ -151,19 +201,16 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     let uploadedBytes = 0;
     const uploadWorker = async () => {
         while (true) {
-            // Atomically claim the next part index before any await
             const part = currentPart++;
             if (part >= numParts)
-                break; // Guard: stop if no more parts remain
+                break;
             const start = part * CHUNK_SIZE;
             const end = Math.min(start + CHUNK_SIZE, size);
             const chunkSize = end - start;
-            // Handle slice for both Buffer and Blob
-            const chunk = typeof fileBuffer.slice === 'function' ? fileBuffer.slice(start, end) : fileBuffer.subarray(start, end);
+            const blob = await getChunkBlob(start, end);
             const form = new FormData();
-            const blob = new Blob([chunk], { type: mimeType });
-            form.append("file", blob, filename || "uploaded-file");
-            form.append("part_number", (part + 1).toString()); // 1-indexed
+            form.append("file", blob, filename);
+            form.append("part_number", (part + 1).toString());
             await fetchWithRetry(upload_url, {
                 method: "POST",
                 headers: {
@@ -177,13 +224,10 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
                 try {
                     options.onProgress(uploadedBytes, size);
                 }
-                catch {
-                    // Ignore errors thrown in user callback
-                }
+                catch { }
             }
         }
     };
-    // Spin up multiple workers to process chunks in parallel
     const workers = [];
     for (let i = 0; i < Math.min(concurrency, numParts); i++) {
         workers.push(uploadWorker());
@@ -202,4 +246,3 @@ async function uploadToNotion(apiKey, fileBuffer, mimeType, filename, options = 
     });
     return id;
 }
-// Export handled by `export async function uploadToNotion`

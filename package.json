@@ -1,7 +1,7 @@
 {
   "name": "notion-multipart-uploader",
   "version": "2.4.1",
-  "description": "Native zero-dependency multipart file uploader for Notion API. Direct upload any media type (videos, phone gallery images, audio, PDFs, and binary blobs) to Notion without external hosting.",
+  "description": "Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -28,11 +28,14 @@
     "audio",
     "image",
     "pdf",
-    "file_uploads",
-    "direct-upload",
-    "zero-dependency",
-    "agent-optimized",
-    "llm-friendly"
+    "notion-file-upload",
+    "notion-file-uploads",
+    "multipart-upload",
+    "large-file-upload",
+    "notion-mcp",
+    "mcp",
+    "typescript",
+    "nodejs"
   ],
   "author": "Shoubhik Saha <officialshoubhiksaha@gmail.com>",
   "repository": {

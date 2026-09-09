@@ -1,0 +1,65 @@
+# notion-multipart-uploader Docs
+
+Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.
+
+- [Uploading large files (Node.js)](upload-large-files.md)
+- [Attaching files to Notion](attach-to-notion.md)
+- [Using with AI Agents and MCP](ai-agents-mcp.md)
+- [Difference from @notionhq/client](differences-from-sdk.md)
+# Uploading large files > 20MB with Node.js
+
+Use `uploadFile` to stream large files (up to 5GB) without blowing up memory.
+
+```javascript
+const { uploadFile } = require("notion-multipart-uploader");
+
+async function upload() {
+  const fileId = await uploadFile(
+    process.env.NOTION_KEY, 
+    "./massive-video.mp4", 
+    "video/mp4",
+    { retries: 5, concurrency: 3 }
+  );
+  console.log("File uploaded with ID:", fileId);
+}
+```
+
+Reference: [Notion File Uploads API](https://developers.notion.com/docs/working-with-files-and-media)
+# Attaching files to Notion
+
+Once you have a `file_upload` ID, attach it using the official `@notionhq/client`.
+
+```javascript
+const { Client } = require("@notionhq/client");
+const notion = new Client({ auth: process.env.NOTION_KEY });
+
+await notion.blocks.children.append({
+  block_id: "your_page_id",
+  children: [{
+    type: "video",
+    video: {
+      type: "file_upload",
+      file_upload: { id: fileId }
+    }
+  }]
+});
+```
+
+Reference: [Notion Blocks API](https://developers.notion.com/reference/block)
+# Using with AI Agents and MCP
+
+Standard Notion MCP servers can only upload files up to 20 MiB. AI generated videos and datasets often exceed this.
+
+**Recommended approach for agents:**
+Use the `notion-large-file-upload-mcp` server which wraps `notion-multipart-uploader`.
+
+Alternatively, if generating code, use this package directly to handle the >20 MiB multi-part requirements automatically.
+# Differences from @notionhq/client
+
+| Feature | @notionhq/client | notion-multipart-uploader |
+|---|---|---|
+| Single-part (<= 20 MiB) | Supported | Supported |
+| Multi-part (> 20 MiB) | Endpoints only | Fully automated chunking |
+| Large file memory | Loads into RAM | `uploadFile` streams from disk |
+| Retry limits | Basic | Exponential backoff, jitter, `Retry-After`, `529` handling |
+| Concurrency | None | Concurrent chunk uploads |

@@ -13,6 +13,17 @@ export interface UploadOptions {
     onProgress?: (uploadedBytes: number, totalBytes: number) => void;
 }
 /**
+ * Uploads a local file from disk to Notion's servers (Node.js only).
+ * Uses bounded memory chunk reads to support files up to 5GB without memory bloat.
+ *
+ * @param apiKey - Your Notion Integration Token
+ * @param filePath - The absolute or relative path to the file on disk
+ * @param mimeType - e.g., 'audio/mp4', 'image/jpeg', 'application/pdf'
+ * @param options - Additional options like retries or Notion API version
+ * @returns The Notion File ID to use in your blocks
+ */
+export declare function uploadFile(apiKey: string, filePath: string, mimeType: string, options?: UploadOptions): Promise<string>;
+/**
  * Uploads a binary file directly to Notion's servers using native fetch.
  * Automatically handles single-part (<= 20MB) and multi-part (> 20MB) chunking.
  *

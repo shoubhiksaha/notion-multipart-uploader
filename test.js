@@ -70,4 +70,4 @@ async function runTests() {
     }
 }
 
-testUpload();
+runTests();

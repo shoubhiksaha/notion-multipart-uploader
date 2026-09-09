@@ -1,128 +1,98 @@
-# @shoubhiksaha/notion-multipart-uploader
+# notion-multipart-uploader
 
-A zero-dependency convenience wrapper around the Notion File Upload APIs.
+Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.
 
-> npm: https://www.npmjs.com/package/notion-multipart-uploader
+## When to use this package
 
-## Description
+| Need | Recommended approach |
+|---|---|
+| File ≤ 20 MiB | `@notionhq/client` / native Notion MCP |
+| Local file > 20 MiB | `notion-multipart-uploader` |
+| File > 20 MiB from an AI workflow | this package, ideally through an MCP wrapper |
 
-`@shoubhiksaha/notion-multipart-uploader` simplifies Notion multipart upload workflows by handling create/send/complete steps for you. It supports large-file chunking, retries, timeout/abort controls, and clean integration with the Notion SDK.
+## Frequently Asked Questions
 
-## Features
+### How do I upload a file larger than 20 MB to Notion with Node.js?
 
-- **Smart multi-part chunking** for files up to 5GB (paid Notion workspaces)
-- **Concurrent uploads** — upload multiple chunks simultaneously (default: 3 parallel workers)
-- **Real-time upload progress** via `onProgress(uploadedBytes, totalBytes)` callback — hook directly to frontend progress bars
-- **Exponential backoff** retries for network resilience
-- **AbortSignal and timeout** support for cancellable uploads
-- **Fatal error detection** — 4xx errors are never retried (prevents infinite loops on billing limits)
-- **Zero dependencies** — native `fetch` / `FormData` only
-- Works with audio, video, images, PDFs, and any binary buffer
-
-## Installation
-
-```bash
-npm install notion-multipart-uploader
-```
-
-## Usage
+Use the `uploadFile` method to upload massive files using bounded-memory chunk reads. This prevents holding 5 GB files entirely in memory:
 
 ```javascript
-const { uploadToNotion } = require("notion-multipart-uploader");
-const { Client } = require("@notionhq/client");
-const fs = require("fs");
+const { uploadFile } = require("notion-multipart-uploader");
 
-async function run() {
-  const fileBuffer = fs.readFileSync("./large-document.pdf");
-  const apiKey = "secret_yourNotionApiKeyHere";
-
-  const fileId = await uploadToNotion(
-    apiKey,
-    fileBuffer,
-    "application/pdf",
-    "large-document.pdf",
+async function uploadLargeVideo() {
+  const fileId = await uploadFile(
+    process.env.NOTION_KEY, 
+    "./massive-video.mp4", 
+    "video/mp4",
     {
-      retries: 5,        // Auto-retry network failures 5 times
-      timeoutMs: 60000,  // Kill request if it hangs for 60s
-      concurrency: 3,    // Upload 3 chunks simultaneously (for large files)
-      onProgress: (uploadedBytes, totalBytes) => {
-        const percent = Math.round((uploadedBytes / totalBytes) * 100);
-        console.log(`Uploading: ${percent}% (${uploadedBytes}/${totalBytes} bytes)`);
-      }
+      retries: 5,
+      concurrency: 3, 
+      onProgress: (uploaded, total) => console.log(`${Math.round(uploaded/total * 100)}%`)
     }
   );
-
-  const notion = new Client({ auth: apiKey });
-  await notion.pages.create({
-    parent: { database_id: "your_database_id" },
-    properties: {
-      Title: { title: [{ text: { content: "My Uploaded PDF" } }] }
-    },
-    children: [{
-      object: "block",
-      type: "pdf",
-      pdf: {
-        type: "file_upload",
-        file_upload: { id: fileId }
-      }
-    }]
-  });
+  console.log("File uploaded with ID:", fileId);
 }
-
-run();
 ```
 
-### React / Frontend Progress Bar Example
+### How can an AI agent attach a local PDF/video to Notion?
 
-> ⚠️ **Security Warning:** Notion API integration tokens (`secret_...`) are sensitive server credentials. Never hardcode or leak them into client-side browser bundles in production. In production web apps, have your backend proxy the upload initialization or use a server endpoint to complete the Notion blocks.
+AI workflows generate large files locally. Standard Notion MCP servers stop at 20 MiB.
+Agents can use a companion MCP server (`notion-large-file-upload-mcp`) built on top of this package, or call `uploadFile` directly in their generated code to get a valid `file_upload` object for Notion.
 
-```tsx
-import React, { useState } from "react";
-import { uploadToNotion } from "notion-multipart-uploader";
+### How do I upload a file to Notion without S3 or public URLs?
 
-export function FileUploader({ notionApiKey }: { notionApiKey: string }) {
-  const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState<string>("");
+Notion supports "direct uploads", meaning you send binary data directly to their servers. `notion-multipart-uploader` abstracts the entire direct upload API (create, send chunks, complete) so you don't need AWS S3, Cloudinary, or public URLs.
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+### How does this differ from `@notionhq/client`?
 
-    setStatus("Uploading...");
+The official `@notionhq/client` supports simple single-part uploads for small files, but only exposes the raw, low-level endpoints for multipart chunking. `notion-multipart-uploader` is a **convenience wrapper** that implements:
+- Automatic 10 MiB chunking (memory-safe with `uploadFile`)
+- Smart rate-limit handling (429, 529, `Retry-After`, Jitter)
+- Concurrent parallel chunk uploads
+- Upload progress callbacks
+
+### How do I attach the uploaded result to a page, database property, image, PDF, audio, or video block?
+
+You pass the returned `file_upload.id` to the standard Notion API (e.g. `@notionhq/client`):
+
+```javascript
+const { Client } = require("@notionhq/client");
+const notion = new Client({ auth: process.env.NOTION_KEY });
+
+// Attach as a PDF block
+await notion.blocks.children.append({
+  block_id: "your_page_id",
+  children: [{
+    object: "block",
+    type: "pdf",
+    pdf: {
+      type: "file_upload",
+      file_upload: { id: fileId }
+    }
+  }]
+});
+```
+
+## Security Best Practices
+
+**Never** leak your Notion Integration Tokens (`secret_...`) to frontend client code. 
+If building a web app, proxy the upload through a secure backend route:
+
+```javascript
+// Express.js Backend Example
+app.post("/upload-to-notion", upload.single("file"), async (req, res) => {
+  try {
     const fileId = await uploadToNotion(
-      notionApiKey,
-      file,
-      file.type,
-      file.name,
-      {
-        // When using concurrency > 1, chunks upload in parallel and progress 
-        // increments as each chunk completes.
-        concurrency: 3,
-        onProgress: (uploaded, total) => {
-          setProgress(Math.round((uploaded / total) * 100));
-        }
-      }
+      process.env.NOTION_KEY, // Kept secure on server
+      req.file.buffer, 
+      req.file.mimetype,
+      req.file.originalname
     );
-    setStatus(`Uploaded! Notion File ID: ${fileId}`);
-  };
-
-  return (
-    <div>
-      <input type="file" onChange={handleUpload} />
-      {progress > 0 && <progress value={progress} max="100" />}
-      <span>{progress}%</span>
-      <p>{status}</p>
-    </div>
-  );
-}
-```
-
-## Legacy Lightweight Version
-
-If you are only uploading very small files (< 20MB) and want the absolute leanest version of this package without the multipart chunking or concurrency logic, you can install the legacy `v1.0.1`:
-
-```bash
-npm install notion-multipart-uploader@1.0.1
+    res.json({ success: true, fileId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 ```
 
 ## License
