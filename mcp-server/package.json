@@ -1,17 +1,45 @@
 {
   "name": "notion-large-file-upload-mcp",
   "version": "1.0.0",
-  "description": "Use when a local file exceeds Notion MCP’s 20 MiB upload limit.",
+  "description": "Model Context Protocol (MCP) server for uploading large files (>20 MiB up to 5 GB) to Notion without external storage.",
   "main": "index.js",
   "bin": {
     "notion-large-file-upload-mcp": "./index.js"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node test-mcp.js"
   },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "notion",
+    "notion-api",
+    "notion-mcp",
+    "large-files",
+    "multipart-upload",
+    "claude-desktop",
+    "cursor",
+    "ai-agents"
+  ],
+  "author": "Shoubhik Saha",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shoubhiksaha/notion-multipart-uploader.git",
+    "directory": "mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/shoubhiksaha/notion-multipart-uploader/issues"
+  },
+  "homepage": "https://github.com/shoubhiksaha/notion-multipart-uploader#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.1",
-    "notion-multipart-uploader": "file:../",
-    "@notionhq/client": "^2.2.14"
+    "@notionhq/client": "^2.2.14",
+    "notion-multipart-uploader": "^2.4.1"
   }
 }

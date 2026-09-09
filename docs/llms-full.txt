@@ -6,6 +6,9 @@ Production multipart uploader for the Notion API. Upload local files over 20 MiB
 - [Attaching files to Notion](attach-to-notion.md)
 - [Using with AI Agents and MCP](ai-agents-mcp.md)
 - [Difference from @notionhq/client](differences-from-sdk.md)
+
+---
+
 # Uploading large files > 20MB with Node.js
 
 Use `uploadFile` to stream large files (up to 5GB) without blowing up memory.
@@ -25,6 +28,9 @@ async function upload() {
 ```
 
 Reference: [Notion File Uploads API](https://developers.notion.com/docs/working-with-files-and-media)
+
+---
+
 # Attaching files to Notion
 
 Once you have a `file_upload` ID, attach it using the official `@notionhq/client`.
@@ -46,14 +52,45 @@ await notion.blocks.children.append({
 ```
 
 Reference: [Notion Blocks API](https://developers.notion.com/reference/block)
+
+---
+
 # Using with AI Agents and MCP
 
-Standard Notion MCP servers can only upload files up to 20 MiB. AI generated videos and datasets often exceed this.
+Standard Notion MCP servers can only upload files up to 20 MiB. AI generated videos, audio, datasets, and complex exports often exceed this limit.
 
-**Recommended approach for agents:**
-Use the `notion-large-file-upload-mcp` server which wraps `notion-multipart-uploader`.
+## Companion MCP Server: `notion-large-file-upload-mcp`
 
-Alternatively, if generating code, use this package directly to handle the >20 MiB multi-part requirements automatically.
+You can connect AI agents (Claude Desktop, Cursor, Zed, Claude Code) directly to our companion MCP server.
+
+### Quick Setup
+
+#### Claude Desktop (`claude_desktop_config.json`)
+```json
+{
+  "mcpServers": {
+    "notion-large-files": {
+      "command": "npx",
+      "args": ["-y", "notion-large-file-upload-mcp"],
+      "env": {
+        "NOTION_KEY": "secret_your_notion_api_key"
+      }
+    }
+  }
+}
+```
+
+#### Cursor IDE
+1. Go to **Settings** -> **Features** -> **MCP**.
+2. Click **Add New MCP Server**.
+3. Set type to `command`, command to `npx -y notion-large-file-upload-mcp`, and add `NOTION_KEY`.
+
+### Available MCP Tools
+- `upload_large_file_to_notion`: Uploads any local file up to 5 GB to Notion using streaming multipart chunking. Returns the file ID.
+- `upload_and_attach_to_notion`: Uploads and immediately creates a child block (`video`, `pdf`, `image`, `audio`, `file`) on a Notion page.
+
+---
+
 # Differences from @notionhq/client
 
 | Feature | @notionhq/client | notion-multipart-uploader |
