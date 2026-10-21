@@ -12,8 +12,10 @@ We welcome contributions!
 
 ## Integration Tests
 
-To run integration tests, set your `NOTION_KEY` and `DATABASE_ID` environment variables and run `npm run test:integration`. 
+To run integration tests, set `NOTION_KEY` and `NOTION_PAGE_ID` (a page shared with your integration) and run `npm run test:integration`. The test appends the uploaded files to that page. Set `NOTION_TEST_LARGE=1` to also run 25 MiB multi-part uploads, which need a paid workspace.
 Never commit these secrets.
+
+CI runs the same test on pushes to `main` once the `NOTION_KEY` and `NOTION_PAGE_ID` repository secrets are set.
 
 ## Pull Requests
 
@@ -23,8 +25,10 @@ Never commit these secrets.
 
 ## Releasing
 
+Releases are published by the `Release` GitHub workflow when a version tag is pushed. It publishes with npm provenance, using [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) if it's configured for the package on npmjs.com, or an `NPM_TOKEN` repository secret otherwise.
+
 The MCP server depends on the published library, so release the library first:
 
-1. Bump the library version (`npm version <version>`), update `CHANGELOG.md`, and run `npm publish`.
+1. Bump the library version (`npm version <version>`), update `CHANGELOG.md`, and push the commit and its `v<version>` tag. The workflow checks that the tag matches `package.json`, runs the tests, and publishes.
 2. In `mcp-server/`, update the `notion-multipart-uploader` dependency to the new version and run `npm install` to refresh `package-lock.json`.
-3. Run `npm test` in `mcp-server/`, then bump its version and run `npm publish` there.
+3. Bump `mcp-server/package.json`'s version, commit, and push an `mcp-v<version>` tag. The workflow tests the server against the published library and publishes it.

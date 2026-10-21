@@ -16,6 +16,10 @@ globalThis.fetch = async (input, init = {}) => {
   const url = String(input);
   const notionVersion = new Headers(init.headers).get("notion-version");
 
+  if (url.endsWith("/v1/users/me")) {
+    return json({ object: "user", type: "bot", bot: { workspace_limits: { max_file_upload_size_in_bytes: 5 * 1024 * 1024 * 1024 } } });
+  }
+
   if (url.endsWith("/v1/file_uploads")) {
     log({ type: "create", notionVersion, body: JSON.parse(init.body) });
     return json({
@@ -35,6 +39,8 @@ globalThis.fetch = async (input, init = {}) => {
         });
       });
     }
+    // A short delay, like a real upload, so progress notifications aren't sent in the same instant as the result
+    await new Promise((resolve) => setTimeout(resolve, 50));
     return json({ object: "file_upload", id: UPLOAD_ID, status: "uploaded" });
   }
 

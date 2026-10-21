@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatically handles `529 Server Overloaded` responses for better stability under load.
 - Expanded SDK support for robust server integrations and AI agent usage.
 - `uploadToNotion` accepts `ArrayBuffer` and other typed array views, and encodes strings as UTF-8.
+- `uploadStream(apiKey, stream, mimeType, filename, { size })` uploads Node.js streams, web `ReadableStream`s and async iterables without buffering the whole file.
+- `NotionUploadError` with `code`, `status` and `retryable`, thrown for every failed upload.
+- `preflight` option (on by default): rejects file types Notion doesn't support, and files larger than the workspace's upload limit, before uploading anything.
+- `uploadFile`'s `mimeType` is optional and inferred from the file extension; new `filename` option to change the name shown in Notion.
+- `inferMimeType` and `isSupportedFileType` helpers based on Notion's supported file types.
+- ES module entry point (`import { uploadFile } from "notion-multipart-uploader"`) that shares one copy of the code with `require`.
+- When Notion responds with `429`, all parallel parts pause until `Retry-After` has passed instead of only the rate-limited one.
 
 ### Fixed
 - When one part of a multi-part upload failed, the other workers kept uploading the remaining parts after the promise had rejected. The upload now stops all workers and waits for them before rejecting.
@@ -24,6 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Requires Node.js 20 or later.
+- Errors are now `NotionUploadError` instances. Messages are unchanged, except that network failures are wrapped as `Network error: ...` with the original error as `cause`.
+- `package.json` now has an `exports` map, so only the package root (and `package.json`) can be imported; deep imports such as `notion-multipart-uploader/dist/index.js` no longer work.
 - `dist/` is no longer committed; it is built by the `prepare` script on install from git and before packing or publishing.
 
 ## [2.4.1] - 2026-09-08

@@ -3,7 +3,8 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { uploadToNotion, uploadFile } = require('./dist/index.js');
+const { Readable } = require('node:stream');
+const { uploadToNotion, uploadFile, uploadStream, NotionUploadError } = require('./dist/index.js');
 
 const MiB = 1024 * 1024;
 
@@ -310,6 +311,7 @@ test('Mock: a failed part stops the other workers before the upload rejects', as
             completeCalled = true;
             return respond();
         }
+        if (url.endsWith('users/me')) return respond({});
         partRequests++;
         const partNumber = Number(options.body.get('part_number'));
         await sleep(20);
@@ -338,6 +340,7 @@ test('Mock: aborting a multi-part upload stops in-flight parts', async () => {
         if (url.endsWith('file_uploads')) {
             return Promise.resolve(respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" }));
         }
+        if (url.endsWith('users/me')) return Promise.resolve(respond({}));
         // Parts only finish when aborted; cancel once all three workers have a part in flight
         if (++partRequests === 3) {
             setTimeout(() => {
@@ -453,7 +456,7 @@ test('Mock: uploadFile rejects empty files and directories', async () => {
 });
 
 test('Mock: uploadFile fails if the file shrinks during the upload', async () => {
-    const file = tempFile('shrinking.bin', Buffer.alloc(25 * MiB));
+    const file = tempFile('shrinking.zip', Buffer.alloc(25 * MiB));
     global.fetch = async (url) => {
         if (url.endsWith('file_uploads')) {
             return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
@@ -463,7 +466,272 @@ test('Mock: uploadFile fails if the file shrinks during the upload', async () =>
     };
 
     await assert.rejects(
-        () => uploadFile("dummy-key", file, "application/octet-stream", { concurrency: 1 }),
+        () => uploadFile("dummy-key", file, "application/zip", { concurrency: 1 }),
         /File changed during upload/
     );
+});
+
+test('Mock: API errors are NotionUploadErrors with Notion\'s code and status', async () => {
+    global.fetch = async () => respond({ object: "error", status: 400, code: "validation_error", message: "bad request" }, 400);
+
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"),
+        (err) => {
+            assert.ok(err instanceof NotionUploadError);
+            assert.strictEqual(err.code, "validation_error");
+            assert.strictEqual(err.status, 400);
+            assert.strictEqual(err.retryable, false);
+            assert.match(err.message, /Notion API Error \(400\)/);
+            return true;
+        }
+    );
+});
+
+test('Mock: failures after retries, timeouts, network errors and aborts have their own codes', async () => {
+    global.fetch = async () => respond("busy", 503);
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt", { retries: 0 }),
+        { name: "NotionUploadError", code: "http_error", status: 503, retryable: true }
+    );
+
+    global.fetch = async () => { throw new TypeError("fetch failed"); };
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt", { retries: 0 }),
+        (err) => err.code === "network_error" && err.retryable === true && err.cause instanceof TypeError
+    );
+
+    global.fetch = (url, options) => new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    });
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt", { retries: 0, timeoutMs: 20 }),
+        { code: "timeout", retryable: true }
+    );
+
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt", { signal: controller.signal }),
+        { code: "aborted", retryable: false }
+    );
+});
+
+test('Mock: unsupported file types are rejected before contacting Notion', async () => {
+    let fetchCount = 0;
+    global.fetch = async (url) => {
+        fetchCount++;
+        return respond({ id: "mock-id", upload_url: "mock-url" });
+    };
+
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("x"), "application/octet-stream", "data.bin"),
+        { code: "unsupported_file_type" }
+    );
+    assert.strictEqual(fetchCount, 0);
+
+    // A supported extension is enough, even with a generic content type
+    await uploadToNotion("dummy-key", Buffer.from("x"), "application/octet-stream", "notes.md");
+    // So is a supported content type without an extension
+    await uploadToNotion("dummy-key", Buffer.from("x"), "text/plain; charset=utf-8", "README");
+    // preflight: false skips the check
+    await uploadToNotion("dummy-key", Buffer.from("x"), "application/octet-stream", "data.bin", { preflight: false });
+});
+
+test('Mock: the MIME type is inferred from the extension when omitted', async () => {
+    const contentTypes = [];
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) {
+            contentTypes.push(JSON.parse(options.body).content_type);
+            return respond({ id: "mock-id", upload_url: "mock-url" });
+        }
+        return respond();
+    };
+
+    await uploadFile("dummy-key", tempFile('report.pdf', '%PDF-1.4'));
+    await uploadToNotion("dummy-key", Buffer.from("x"), "", "clip.MOV");
+    assert.deepStrictEqual(contentTypes, ["application/pdf", "video/quicktime"]);
+});
+
+test('Mock: uploadFile uses the filename option in Notion', async () => {
+    let createBody;
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) {
+            createBody = JSON.parse(options.body);
+            return respond({ id: "mock-id", upload_url: "mock-url" });
+        }
+        assert.strictEqual(options.body.get('file').name, "Quarterly report.pdf");
+        return respond();
+    };
+
+    await uploadFile("dummy-key", tempFile('tmp-8f3a.pdf', '%PDF-1.4'), "application/pdf", { filename: "Quarterly report.pdf" });
+    assert.strictEqual(createBody.filename, "Quarterly report.pdf");
+});
+
+test('Mock: files over the workspace upload limit fail before uploading', async () => {
+    const requests = [];
+    global.fetch = async (url) => {
+        requests.push(url);
+        if (url.endsWith('users/me')) {
+            return respond({ object: "user", type: "bot", bot: { workspace_limits: { max_file_upload_size_in_bytes: 5 * MiB } } });
+        }
+        return respond({ id: "mock-id", upload_url: "mock-url" });
+    };
+
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.alloc(6 * MiB), "video/mp4", "v.mp4"),
+        (err) => err.code === "file_too_large" && /up to 5\.0 MiB/.test(err.message)
+    );
+    assert.deepStrictEqual(requests, ["https://api.notion.com/v1/users/me"]);
+});
+
+test('Mock: the workspace limit is only checked for files over 5 MiB, and skipped if unavailable', async () => {
+    const requests = [];
+    global.fetch = async (url) => {
+        requests.push(url);
+        if (url.endsWith('users/me')) return respond({ object: "error", code: "restricted_resource" }, 403);
+        return respond({ id: "mock-id", upload_url: "mock-url" });
+    };
+
+    await uploadToNotion("dummy-key", Buffer.alloc(1024), "text/plain", "a.txt");
+    assert.ok(!requests.some((url) => url.endsWith('users/me')));
+
+    requests.length = 0;
+    await uploadToNotion("dummy-key", Buffer.alloc(6 * MiB), "video/mp4", "v.mp4");
+    assert.strictEqual(requests[0], "https://api.notion.com/v1/users/me");
+    assert.ok(requests.includes("mock-url"), "The upload should continue when the limit can't be read");
+
+    requests.length = 0;
+    await uploadToNotion("dummy-key", Buffer.alloc(6 * MiB), "video/mp4", "v.mp4", { preflight: false });
+    assert.ok(!requests.some((url) => url.endsWith('users/me')));
+});
+
+test('Mock: uploadStream uploads a Node.js stream in order', async () => {
+    const contents = patternedBuffer(25 * MiB);
+    // Odd-sized pieces so parts span several stream chunks
+    const pieces = [];
+    for (let i = 0; i < contents.length; i += 3 * MiB + 7) pieces.push(contents.subarray(i, i + 3 * MiB + 7));
+
+    const parts = new Map();
+    let createBody;
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) {
+            createBody = JSON.parse(options.body);
+            return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        }
+        if (url === 'mock-url') {
+            parts.set(Number(options.body.get('part_number')), Buffer.from(await options.body.get('file').arrayBuffer()));
+        }
+        return respond();
+    };
+
+    const id = await uploadStream("dummy-key", Readable.from(pieces), "video/mp4", "clip.mp4", { size: contents.length, concurrency: 3 });
+    assert.strictEqual(id, "mock-id");
+    assert.strictEqual(createBody.number_of_parts, 3);
+    assert.ok(Buffer.concat([parts.get(1), parts.get(2), parts.get(3)]).equals(contents), "Uploaded parts do not match the stream");
+});
+
+test('Mock: uploadStream accepts web ReadableStreams and string chunks', async () => {
+    const uploads = [];
+    global.fetch = async (url, options) => {
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url" });
+        uploads.push(Buffer.from(await options.body.get('file').arrayBuffer()).toString());
+        return respond();
+    };
+
+    const web = new ReadableStream({
+        start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello "));
+            controller.enqueue(new TextEncoder().encode("world"));
+            controller.close();
+        }
+    });
+    await uploadStream("dummy-key", web, "text/plain", "a.txt", { size: 11 });
+
+    async function* strings() {
+        yield "héllo ";
+        yield "✓";
+    }
+    await uploadStream("dummy-key", strings(), "text/plain", "b.txt", { size: Buffer.byteLength("héllo ✓") });
+
+    assert.deepStrictEqual(uploads, ["hello world", "héllo ✓"]);
+});
+
+test('Mock: uploadStream rejects streams shorter or longer than the declared size', async () => {
+    let uploadRequests = 0;
+    let completeCalled = false;
+    global.fetch = async (url) => {
+        if (url.endsWith('users/me')) return respond({});
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        if (url === 'mock-complete') completeCalled = true;
+        else uploadRequests++;
+        return respond();
+    };
+
+    await assert.rejects(
+        () => uploadStream("dummy-key", Readable.from([Buffer.alloc(25 * MiB)]), "video/mp4", "v.mp4", { size: 30 * MiB }),
+        { code: "size_mismatch" }
+    );
+    assert.strictEqual(completeCalled, false);
+
+    uploadRequests = 0;
+    await assert.rejects(
+        () => uploadStream("dummy-key", Readable.from([Buffer.alloc(1000)]), "text/plain", "a.txt", { size: 999 }),
+        { code: "size_mismatch" }
+    );
+    assert.strictEqual(uploadRequests, 0, "A single-part stream should be checked before it is sent");
+});
+
+test('Mock: a failed stream upload stops reading and destroys the stream', async () => {
+    global.fetch = async (url) => {
+        if (url.endsWith('users/me')) return respond({});
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        return respond("invalid part", 400);
+    };
+
+    let piecesRead = 0;
+    const stream = Readable.from((function* () {
+        for (let i = 0; i < 50; i++) {
+            piecesRead++;
+            yield Buffer.alloc(MiB);
+        }
+    })());
+
+    await assert.rejects(
+        () => uploadStream("dummy-key", stream, "video/mp4", "v.mp4", { size: 50 * MiB, concurrency: 1 }),
+        { code: "http_error", status: 400 }
+    );
+    assert.strictEqual(stream.destroyed, true);
+    assert.ok(piecesRead < 50, `Read ${piecesRead} of 50 pieces after the upload failed`);
+});
+
+test('Mock: uploadStream validates its arguments', async () => {
+    await assert.rejects(() => uploadStream("dummy-key", Readable.from([]), "text/plain", "a.txt", {}), TypeError);
+    await assert.rejects(() => uploadStream("dummy-key", Readable.from([]), "text/plain", "a.txt", { size: -1 }), TypeError);
+    await assert.rejects(() => uploadStream("dummy-key", Readable.from([]), "text/plain", "a.txt", { size: 0 }), { code: "empty_file" });
+    await assert.rejects(() => uploadStream("dummy-key", Buffer.from("hi"), "text/plain", "a.txt", { size: 2 }), TypeError);
+});
+
+test('Mock: a 429 pauses every worker until Retry-After has passed', async () => {
+    let rateLimitedAt;
+    const partStarts = [];
+    global.fetch = async (url, options) => {
+        if (url.endsWith('users/me')) return respond({});
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        if (url === 'mock-complete') return respond();
+        partStarts.push({ part: Number(options.body.get('part_number')), at: Date.now() });
+        if (rateLimitedAt === undefined) {
+            rateLimitedAt = Date.now();
+            return respond("slow down", 429, { 'Retry-After': '1' });
+        }
+        await sleep(10);
+        return respond();
+    };
+
+    // 50 MiB = 5 parts. Parts 2 and 3 are already in flight when part 1 is rate-limited,
+    // but parts 4 and 5 must wait for the Retry-After second like the retry of part 1.
+    await uploadToNotion("dummy-key", Buffer.alloc(50 * MiB), "video/mp4", "v.mp4", { concurrency: 3 });
+
+    const sentDuringPause = partStarts.filter((s) => s.part >= 4 && s.at < rateLimitedAt + 950).map((s) => s.part);
+    assert.deepStrictEqual(sentDuringPause, [], "Workers kept sending parts while Notion was rate-limiting");
+    assert.strictEqual(partStarts.length, 6); // 5 parts + the retried part 1
 });

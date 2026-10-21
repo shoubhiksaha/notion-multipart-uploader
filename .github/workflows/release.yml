@@ -1,0 +1,55 @@
+name: Release
+
+# Push a tag to publish: vX.Y.Z publishes notion-multipart-uploader,
+# mcp-vX.Y.Z publishes notion-large-file-upload-mcp from mcp-server/.
+on:
+  push:
+    tags: [ 'v*', 'mcp-v*' ]
+
+permissions:
+  contents: read
+  # Lets npm publish with provenance and use npm trusted publishing (no long-lived token needed)
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # npm 11.5.1+ is required for trusted publishing; Node 24 ships with it
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+
+      - name: Publish notion-multipart-uploader
+        if: startsWith(github.ref_name, 'v')
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match package.json version $version"
+            exit 1
+          fi
+          npm publish --provenance --access public
+        env:
+          # Only needed if trusted publishing isn't configured on npmjs.com
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish notion-large-file-upload-mcp
+        if: startsWith(github.ref_name, 'mcp-v')
+        working-directory: mcp-server
+        run: |
+          version="mcp-v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match mcp-server/package.json version $version"
+            exit 1
+          fi
+          # Installs the published library from the lockfile, so this tests exactly what users will get
+          npm ci
+          npm test
+          npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

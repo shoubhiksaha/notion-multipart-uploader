@@ -19,7 +19,14 @@ async function connect(env = {}) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["--require", mockPath, serverPath],
-    env: { ...process.env, NOTION_KEY: "secret_test_mock", NOTION_API_KEY: "", NOTION_TOKEN: "", ...env },
+    env: {
+      ...process.env,
+      NOTION_KEY: "secret_test_mock",
+      NOTION_API_KEY: "",
+      NOTION_TOKEN: "",
+      NOTION_UPLOAD_ALLOWED_DIRS: workDir,
+      ...env
+    },
     stderr: "inherit"
   });
   const client = new Client({ name: "test-client", version: "1.0.0" });
@@ -65,8 +72,11 @@ test("upload_large_file_to_notion uploads through the library and reports progre
   assert.ok(!result.isError, textOf(result));
   assert.match(textOf(result), /File ID: fu_mock/);
   assert.match(textOf(result), /MIME: application\/pdf/);
+  // The SDK client drops progress notifications that arrive together with the result,
+  // so only the first one (sent before the upload request) is guaranteed to be seen
   const size = fs.statSync(pdfPath).size;
-  assert.deepStrictEqual(progress.at(-1), { progress: size, total: size });
+  assert.deepStrictEqual(progress[0], { progress: 0, total: size });
+  assert.ok(progress.every((p) => p.total === size && p.progress <= size));
 }));
 
 test("upload_and_attach_to_notion appends an inferred block with the same Notion version", async () => {
@@ -138,6 +148,27 @@ test("rejects invalid arguments before uploading", () => withServer({}, async (c
   assert.match(textOf(missing), /File not found/);
 }));
 
+test("rejects unsupported file types before uploading", () => withServer({}, async (client) => {
+  const binPath = path.join(workDir, "firmware.bin");
+  fs.writeFileSync(binPath, "binary");
+  const result = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: binPath } });
+  assert.strictEqual(result.isError, true);
+  assert.match(textOf(result), /Notion doesn't accept "firmware\.bin"/);
+}));
+
+test("upload tools refuse to run without NOTION_UPLOAD_ALLOWED_DIRS", () => withServer({ NOTION_UPLOAD_ALLOWED_DIRS: "" }, async (client) => {
+  const upload = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: pdfPath } });
+  assert.strictEqual(upload.isError, true);
+  assert.match(textOf(upload), /NOTION_UPLOAD_ALLOWED_DIRS is not set/);
+
+  // Attaching an existing upload doesn't read local files, so it still works
+  const attach = await client.callTool({
+    name: "attach_file_upload_to_notion",
+    arguments: { fileUploadId: "fu_existing", blockId: "page_456", blockType: "file" }
+  });
+  assert.ok(!attach.isError, textOf(attach));
+}));
+
 test("reports a missing Notion token", () => withServer({ NOTION_KEY: "" }, async (client) => {
   const result = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: pdfPath } });
   assert.strictEqual(result.isError, true);
@@ -152,8 +183,12 @@ test("NOTION_UPLOAD_ALLOWED_DIRS limits which files can be uploaded", async () =
   const escapingLink = path.join(allowedDir, "escape.pdf");
   fs.rmSync(escapingLink, { force: true });
   fs.symlinkSync(pdfPath, escapingLink);
+  const insideLink = path.join(allowedDir, "Final cut.mp4");
+  fs.rmSync(insideLink, { force: true });
+  fs.symlinkSync(insideFile, insideLink);
+  const logPath = path.join(workDir, "allowed.log");
 
-  await withServer({ NOTION_UPLOAD_ALLOWED_DIRS: allowedDir }, async (client) => {
+  await withServer({ NOTION_UPLOAD_ALLOWED_DIRS: allowedDir, MOCK_REQUEST_LOG: logPath }, async (client) => {
     const inside = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: insideFile } });
     assert.ok(!inside.isError, textOf(inside));
 
@@ -164,7 +199,14 @@ test("NOTION_UPLOAD_ALLOWED_DIRS limits which files can be uploaded", async () =
     const viaSymlink = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: escapingLink } });
     assert.strictEqual(viaSymlink.isError, true);
     assert.match(textOf(viaSymlink), /Access denied/);
+
+    // A link that stays inside the allowed directory is uploaded under the link's name
+    const viaInsideLink = await client.callTool({ name: "upload_large_file_to_notion", arguments: { filePath: insideLink } });
+    assert.ok(!viaInsideLink.isError, textOf(viaInsideLink));
   });
+
+  const filenames = readRequestLog(logPath).filter((r) => r.type === "create").map((r) => r.body.filename);
+  assert.deepStrictEqual(filenames, ["clip.mp4", "Final cut.mp4"]);
 });
 
 test("cancelling a tool call aborts the upload", async () => {
