@@ -10,6 +10,37 @@ Production multipart uploader for the Notion API. Upload local files over 20 MiB
 | Local file > 20 MiB | `notion-multipart-uploader` |
 | File > 20 MiB from an AI workflow | this package, ideally through an MCP wrapper |
 
+## Installation
+
+```bash
+npm install notion-multipart-uploader
+```
+
+Requires Node.js 20 or later.
+
+## API
+
+### `uploadFile(apiKey, filePath, mimeType, options?)`
+
+Node.js only. Reads the file from disk in 10 MiB chunks, so memory use stays bounded even for 5 GB files. Returns the Notion `file_upload` ID.
+
+### `uploadToNotion(apiKey, fileData, mimeType, filename?, options?)`
+
+Uploads data that is already in memory: a `Buffer`, `Uint8Array`, `ArrayBuffer`, `Blob`, or a string (encoded as UTF-8). `filename` defaults to `uploaded-file`. Returns the Notion `file_upload` ID.
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `retries` | `3` | Retries for network errors, timeouts, `429` and `5xx` responses, using exponential backoff with jitter and the `Retry-After` header. Other `4xx` errors fail immediately. |
+| `timeoutMs` | none | Timeout for each request, including reading the response. Timed-out requests are retried. |
+| `signal` | none | `AbortSignal` that cancels the upload, including in-flight requests and retry delays. |
+| `concurrency` | `3` | Number of parts uploaded at the same time for files over 20 MiB. |
+| `onProgress` | none | `(uploadedBytes, totalBytes) => void`, called when the upload starts and after each part. Errors thrown by the callback are ignored. |
+| `notionVersion` | `2026-03-11` | `Notion-Version` header sent with every request. |
+
+If any part of a multi-part upload fails, the remaining parts are stopped and the promise rejects with the first error.
+
 ## Frequently Asked Questions
 
 ### How do I upload a file larger than 20 MB to Notion with Node.js?
@@ -37,7 +68,7 @@ async function uploadLargeVideo() {
 ### How can an AI agent attach a local PDF/video to Notion?
 
 AI workflows generate large files locally. Standard Notion MCP servers stop at 20 MiB.
-Agents can use a companion MCP server (`notion-large-file-upload-mcp`) built on top of this package, or call `uploadFile` directly in their generated code to get a valid `file_upload` object for Notion.
+Agents can use a companion MCP server ([`notion-large-file-upload-mcp`](mcp-server/README.md)) built on top of this package, or call `uploadFile` directly in their generated code to get a valid `file_upload` object for Notion.
 
 ### How do I upload a file to Notion without S3 or public URLs?
 

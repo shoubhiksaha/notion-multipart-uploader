@@ -1,10 +1,12 @@
-const { uploadToNotion } = require('./index');
+const { uploadToNotion, uploadFile } = require('./dist/index.js');
 
 // Never hardcode your API keys in open source! Load them from environment variables instead.
-const NOTION_KEY = process.env.NOTION_KEY || "YOUR_NOTION_API_KEY";
-const DATABASE_ID = process.env.DATABASE_ID || "YOUR_NOTION_DATABASE_ID";
+const NOTION_KEY = process.env.NOTION_KEY;
+const DATABASE_ID = process.env.DATABASE_ID;
 
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 // A tiny valid 1x1 pixel transparent PNG
 const dummyImageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACklEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg==', 'base64');
@@ -12,7 +14,8 @@ const dummyAudioBuffer = Buffer.from('SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYxLjEuMT
 
 async function runTests() {
     if (!NOTION_KEY || !DATABASE_ID) {
-        console.error("❌ ERROR: Please set NOTION_KEY and DATABASE_ID in test.js to run the live tests.");
+        console.error("❌ ERROR: Set the NOTION_KEY and DATABASE_ID environment variables to run the live tests.");
+        process.exitCode = 1;
         return;
     }
 
@@ -24,6 +27,12 @@ async function runTests() {
         console.log("🚀 Testing Audio Upload...");
         const audioId = await uploadToNotion(NOTION_KEY, dummyAudioBuffer, 'audio/mp4', 'test-audio.m4a');
         console.log(`✅ Audio Uploaded! Notion File ID: ${audioId}`);
+
+        console.log("🚀 Testing File Upload from disk...");
+        const textPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'nmu-integration-')), 'test-note.txt');
+        fs.writeFileSync(textPath, 'Uploaded from disk by notion-multipart-uploader');
+        const textId = await uploadFile(NOTION_KEY, textPath, 'text/plain');
+        console.log(`✅ File Uploaded! Notion File ID: ${textId}`);
 
         console.log("📝 Creating a Notion Page to attach these files...");
         const pageRes = await fetch("https://api.notion.com/v1/pages", {
@@ -53,6 +62,11 @@ async function runTests() {
                         object: 'block',
                         type: 'file', // Using 'file' block for dummy audio to avoid format rejection if it checks bytes
                         file: { type: 'file_upload', file_upload: { id: audioId } }
+                    },
+                    {
+                        object: 'block',
+                        type: 'file',
+                        file: { type: 'file_upload', file_upload: { id: textId } }
                     }
                 ]
             })
@@ -60,6 +74,7 @@ async function runTests() {
 
         if (!pageRes.ok) {
             console.error("❌ Failed to create page:", await pageRes.text());
+            process.exitCode = 1;
         } else {
             const pageData = await pageRes.json();
             console.log("✅ Page Created Successfully! URL:", pageData.url);
@@ -67,6 +82,7 @@ async function runTests() {
 
     } catch (err) {
         console.error("❌ Test Failed:", err);
+        process.exitCode = 1;
     }
 }
 

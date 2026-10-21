@@ -1,6 +1,6 @@
 {
   "name": "notion-multipart-uploader",
-  "version": "2.4.1",
+  "version": "2.5.0",
   "description": "Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,13 +10,14 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
     "test": "npm run build && node --test test.mock.js",
-    "test:integration": "node test.js"
+    "test:integration": "npm run build && node test.js",
+    "test:mcp": "rm -f mcp-server/*.tgz && npm pack --pack-destination mcp-server && cd mcp-server && npm install --no-save --no-package-lock ./notion-multipart-uploader-*.tgz && npm test"
   },
   "keywords": [
     "notion",
