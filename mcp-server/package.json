@@ -8,12 +8,15 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node test-mcp.js"
+    "test": "node --test test-mcp.js"
   },
   "files": [
     "index.js",
     "README.md"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -38,8 +41,8 @@
   },
   "homepage": "https://github.com/shoubhiksaha/notion-multipart-uploader#readme",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.1",
-    "@notionhq/client": "^2.2.14",
-    "notion-multipart-uploader": "^2.4.1"
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@notionhq/client": "^5.27.1",
+    "notion-multipart-uploader": "^2.5.0"
   }
 }

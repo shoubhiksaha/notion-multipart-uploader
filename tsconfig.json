@@ -11,5 +11,5 @@
     "outDir": "./dist",
     "types": ["node"]
   },
-  "include": ["index.ts"]
+  "include": ["index.ts", "index.mts"]
 }

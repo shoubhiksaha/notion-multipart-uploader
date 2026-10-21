@@ -10,6 +10,83 @@ Production multipart uploader for the Notion API. Upload local files over 20 MiB
 | Local file > 20 MiB | `notion-multipart-uploader` |
 | File > 20 MiB from an AI workflow | this package, ideally through an MCP wrapper |
 
+## Installation
+
+```bash
+npm install notion-multipart-uploader
+```
+
+Requires Node.js 20 or later. Works with both `require` and `import`, and ships TypeScript types.
+
+```javascript
+import { uploadFile, uploadStream, NotionUploadError } from "notion-multipart-uploader";
+```
+
+## API
+
+### `uploadFile(apiKey, filePath, mimeType?, options?)`
+
+Node.js only. Reads the file from disk in 10 MiB chunks, so memory use stays bounded even for 5 GB files. If `mimeType` is omitted, it's inferred from the file extension. Accepts an extra `filename` option to change the name shown in Notion. Returns the Notion `file_upload` ID.
+
+### `uploadToNotion(apiKey, fileData, mimeType, filename?, options?)`
+
+Uploads data that is already in memory: a `Buffer`, `Uint8Array`, `ArrayBuffer`, `Blob`, or a string (encoded as UTF-8). `filename` defaults to `uploaded-file`. Pass `""` as `mimeType` to infer it from `filename`. Returns the Notion `file_upload` ID.
+
+### `uploadStream(apiKey, stream, mimeType, filename, { size, ...options })`
+
+Uploads a stream without buffering the whole file, for example an incoming HTTP request or a download from another service. Accepts a Node.js `Readable`, a web `ReadableStream`, or any async iterable of bytes. `size` must be the exact length of the stream in bytes, because Notion needs the number of parts before the upload starts. At most `concurrency` parts (10 MiB each) are held in memory at once. If the stream turns out shorter or longer than `size`, the upload fails with `size_mismatch`.
+
+```javascript
+// Forward an upload from an HTTP request straight to Notion
+const fileId = await uploadStream(process.env.NOTION_KEY, req, req.headers["content-type"], "recording.mp4", {
+  size: Number(req.headers["content-length"])
+});
+```
+
+### `inferMimeType(filename)` and `isSupportedFileType(filename, mimeType)`
+
+Helpers for Notion's [supported file types](https://developers.notion.com/docs/working-with-files-and-media). `inferMimeType` returns the MIME type for a supported extension, or `undefined`.
+
+### Options
+
+| Option | Default | Description |
+|---|---|---|
+| `retries` | `3` | Retries for network errors, timeouts, `429` and `5xx` responses, using exponential backoff with jitter and the `Retry-After` header. Other `4xx` errors fail immediately. |
+| `timeoutMs` | none | Timeout for each request, including reading the response. Timed-out requests are retried. |
+| `signal` | none | `AbortSignal` that cancels the upload, including in-flight requests and retry delays. |
+| `concurrency` | `3` | Number of parts uploaded at the same time for files over 20 MiB. |
+| `onProgress` | none | `(uploadedBytes, totalBytes) => void`, called when the upload starts and after each part. Errors thrown by the callback are ignored. |
+| `preflight` | `true` | Before uploading, check that Notion supports the file type and, for files over 5 MiB, that the file fits the workspace's upload limit (read from `GET /v1/users/me`). Set to `false` to skip both checks. |
+| `notionVersion` | `2026-03-11` | `Notion-Version` header sent with every request. |
+
+If any part of a multi-part upload fails, the remaining parts are stopped and the promise rejects with the first error.
+
+Notion allows an average of 3 requests per second per integration. The default `concurrency` of 3 stays close to that. When Notion answers with `429 Too Many Requests`, every part waits for the `Retry-After` time before sending more requests.
+
+### Errors
+
+Failed uploads reject with a `NotionUploadError`:
+
+| Property | Description |
+|---|---|
+| `code` | Notion's error code for API errors (such as `validation_error`, `unauthorized`, `rate_limited`), or one of `aborted`, `timeout`, `network_error`, `invalid_response`, `empty_file`, `not_a_file`, `file_too_large`, `unsupported_file_type`, `file_changed`, `size_mismatch` |
+| `status` | HTTP status of the failed Notion response, if there was one |
+| `retryable` | `true` when trying again later might succeed (rate limits, server errors, timeouts, network errors) |
+
+```javascript
+try {
+  await uploadFile(process.env.NOTION_KEY, "./video.mp4");
+} catch (err) {
+  if (err instanceof NotionUploadError && err.code === "file_too_large") {
+    console.log("This workspace's plan doesn't allow files this large");
+  } else if (err instanceof NotionUploadError && err.retryable) {
+    // Try again later
+  } else {
+    throw err;
+  }
+}
+```
+
 ## Frequently Asked Questions
 
 ### How do I upload a file larger than 20 MB to Notion with Node.js?
@@ -37,7 +114,7 @@ async function uploadLargeVideo() {
 ### How can an AI agent attach a local PDF/video to Notion?
 
 AI workflows generate large files locally. Standard Notion MCP servers stop at 20 MiB.
-Agents can use a companion MCP server (`notion-large-file-upload-mcp`) built on top of this package, or call `uploadFile` directly in their generated code to get a valid `file_upload` object for Notion.
+Agents can use a companion MCP server ([`notion-large-file-upload-mcp`](mcp-server/README.md)) built on top of this package, or call `uploadFile` directly in their generated code to get a valid `file_upload` object for Notion.
 
 ### How do I upload a file to Notion without S3 or public URLs?
 
