@@ -56,9 +56,9 @@ const fileId = await uploadStream(process.env.NOTION_KEY, req, req.headers["cont
 });
 ```
 
-### `inferMimeType(filename)` and `isSupportedFileType(filename, mimeType)`
+### `inferMimeType(filename)`, `isSupportedFileType(filename, mimeType)` and `inferBlockType(filename, mimeType?)`
 
-Helpers for Notion's [supported file types](https://developers.notion.com/docs/working-with-files-and-media). `inferMimeType` returns the MIME type for a supported extension, or `undefined`.
+Helpers for Notion's [supported file types](https://developers.notion.com/docs/working-with-files-and-media). `inferMimeType` returns the MIME type for a supported extension, or `undefined`. `inferBlockType` returns the block type to attach an upload as: `image`, `video`, `audio` or `pdf` when Notion shows that type inline, otherwise `file` (for documents, archives and CAD drawings).
 
 ### Options
 
@@ -111,8 +111,9 @@ With [`@notionhq/client`](https://github.com/makenotion/notion-sdk-js):
 ```javascript
 const file = { type: "file_upload", file_upload: { id: fileId } };
 
-// As a block on a page: image, video, audio, pdf or file
-await notion.blocks.children.append({ block_id: pageId, children: [{ type: "pdf", pdf: file }] });
+// As a block on a page: image, video, audio, pdf or file. inferBlockType picks the right one for the file.
+const blockType = inferBlockType("report.pdf"); // "pdf"
+await notion.blocks.children.append({ block_id: pageId, children: [{ type: blockType, [blockType]: file }] });
 
 // In a database's "Files & media" property
 await notion.pages.update({

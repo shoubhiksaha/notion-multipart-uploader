@@ -3,7 +3,7 @@
 const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { CallToolRequestSchema, ListToolsRequestSchema } = require("@modelcontextprotocol/sdk/types.js");
-const { uploadFile, inferMimeType } = require("notion-multipart-uploader");
+const { uploadFile, inferMimeType, inferBlockType } = require("notion-multipart-uploader");
 const { Client } = require("@notionhq/client");
 const fs = require("fs/promises");
 const path = require("path");
@@ -27,20 +27,6 @@ function getMimeType(filePath, providedMime) {
     return providedMime.trim();
   }
   return inferMimeType(path.basename(filePath)) || "application/octet-stream";
-}
-
-// CAD drawings use image/* types but Notion attaches them as file blocks
-const FILE_BLOCK_MIME_TYPES = ["image/vnd.dwg", "image/vnd.dxf"];
-
-function inferBlockType(mimeType) {
-  // Agents sometimes pass "Video/MP4" or "image/png; charset=binary"
-  const type = String(mimeType).split(";")[0].trim().toLowerCase();
-  if (FILE_BLOCK_MIME_TYPES.includes(type)) return "file";
-  if (type.startsWith("video/")) return "video";
-  if (type.startsWith("image/")) return "image";
-  if (type.startsWith("audio/")) return "audio";
-  if (type === "application/pdf") return "pdf";
-  return "file";
 }
 
 function isInside(dir, target) {
@@ -274,7 +260,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       if (invalid) return errorResult(invalid);
 
       const { fileId, resolvedPath, resolvedMime } = await uploadForTool(apiKey, filePath, mimeType, request, extra);
-      const targetBlockType = blockType || inferBlockType(resolvedMime);
+      const targetBlockType = blockType || inferBlockType(resolvedPath, resolvedMime);
 
       let createdBlockId;
       try {

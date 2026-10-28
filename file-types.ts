@@ -139,6 +139,26 @@ export function inferMimeType(filename: string): string | undefined {
     return MIME_TYPES_BY_EXTENSION[extensionOf(filename)];
 }
 
+/** Block types an uploaded file can be attached as. `file` is the generic download block. */
+export type NotionFileBlockType = "image" | "video" | "audio" | "pdf" | "file";
+
+// CAD drawings have image/* content types, but Notion only accepts them as file blocks
+const FILE_BLOCK_MIME_TYPES = new Set(["image/vnd.dwg", "image/vnd.dxf"]);
+
+/**
+ * The block type to attach an upload as: `image`, `video`, `audio` or `pdf` when Notion renders that
+ * type inline, otherwise `file`. The MIME type wins when given; else the type comes from the extension.
+ */
+export function inferBlockType(filename: string, mimeType?: string): NotionFileBlockType {
+    const type = (mimeType && normalizeMimeType(mimeType)) || inferMimeType(filename) || "";
+    if (FILE_BLOCK_MIME_TYPES.has(type)) return "file";
+    if (type.startsWith("image/")) return "image";
+    if (type.startsWith("video/")) return "video";
+    if (type.startsWith("audio/")) return "audio";
+    if (type === "application/pdf") return "pdf";
+    return "file";
+}
+
 /**
  * Whether Notion accepts an upload with this filename and content type.
  * Notion resolves the type from either one, so it's enough for one of them to be supported.

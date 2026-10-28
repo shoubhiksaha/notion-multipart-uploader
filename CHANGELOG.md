@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `NotionUploadError` with `code`, `status` and `retryable`, thrown for every failed upload.
 - `preflight` option (on by default): rejects file types Notion doesn't support, filenames over Notion's 900-byte limit (`filename_too_long`), and files larger than the workspace's upload limit, before uploading anything.
 - `uploadFile`'s `mimeType` is optional and inferred from the file extension; new `filename` option to change the name shown in Notion.
-- `inferMimeType` and `isSupportedFileType` helpers based on Notion's supported file types.
+- `inferMimeType`, `isSupportedFileType` and `inferBlockType` helpers based on Notion's supported file types. `inferBlockType` returns the block type (`image`, `video`, `audio`, `pdf` or `file`) to attach an upload as; the MCP server uses it too.
 - ES module entry point (`import { uploadFile } from "notion-multipart-uploader"`) that shares one copy of the code with `require`.
 - When Notion responds with `429`, all parallel parts pause until `Retry-After` has passed instead of only the rate-limited one.
 - Uses the wait in the response body (`additional_data.retry_after`) when a `429` or `529` has no `Retry-After` header.

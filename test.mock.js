@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Readable } = require('node:stream');
-const { uploadToNotion, uploadFile, uploadStream, NotionUploadError } = require('./dist/index.js');
+const { uploadToNotion, uploadFile, uploadStream, NotionUploadError, inferBlockType } = require('./dist/index.js');
 
 const MiB = 1024 * 1024;
 
@@ -910,4 +910,23 @@ test('Mock: uploadFile reads every part from the file it opened, even if the pat
 
     await uploadFile("dummy-key", file, "video/mp4", { concurrency: 1 });
     assert.ok(Buffer.concat([parts.get(1), parts.get(2), parts.get(3)]).equals(original), "Parts were read from the replacement file");
+});
+
+test('Mock: inferBlockType picks the block type Notion attaches each file as', () => {
+    // From the extension
+    assert.strictEqual(inferBlockType("clip.MP4"), "video");
+    assert.strictEqual(inferBlockType("photo.heic"), "image");
+    assert.strictEqual(inferBlockType("voice.m4a"), "audio");
+    assert.strictEqual(inferBlockType("report.pdf"), "pdf");
+    assert.strictEqual(inferBlockType("notes.docx"), "file");
+    assert.strictEqual(inferBlockType("model.glb"), "file");
+    assert.strictEqual(inferBlockType("README"), "file");
+    // CAD drawings have image/* types but only attach as file blocks
+    assert.strictEqual(inferBlockType("plan.dwg"), "file");
+    assert.strictEqual(inferBlockType("plan", "image/vnd.dxf"), "file");
+    // A given MIME type wins over the extension, and is matched loosely
+    assert.strictEqual(inferBlockType("upload.bin", "Video/MP4"), "video");
+    assert.strictEqual(inferBlockType("scan", "image/png; charset=binary"), "image");
+    assert.strictEqual(inferBlockType("clip.mp4", "application/octet-stream"), "file");
+    assert.strictEqual(inferBlockType("clip.mp4", ""), "video");
 });

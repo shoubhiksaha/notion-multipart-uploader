@@ -80,12 +80,15 @@ Once you have a `file_upload` ID, attach it with the official `@notionhq/client`
 const { Client } = require("@notionhq/client");
 const notion = new Client({ auth: process.env.NOTION_KEY });
 
+const { inferBlockType } = require("notion-multipart-uploader");
+
 const file = { type: "file_upload", file_upload: { id: fileId } };
 
-// As a block on a page: image, video, audio, pdf or file
+// As a block on a page: image, video, audio, pdf or file. inferBlockType picks the right one for the file.
+const blockType = inferBlockType("recording.mp4"); // "video"
 await notion.blocks.children.append({
   block_id: "your_page_id",
-  children: [{ type: "video", video: file }]
+  children: [{ type: blockType, [blockType]: file }]
 });
 
 // In a database's "Files & media" property

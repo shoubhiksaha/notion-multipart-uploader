@@ -1,6 +1,7 @@
-import { inferMimeType, isSupportedFileType } from './file-types.js';
+import { inferMimeType, isSupportedFileType, inferBlockType } from './file-types.js';
 
-export { inferMimeType, isSupportedFileType };
+export { inferMimeType, isSupportedFileType, inferBlockType };
+export type { NotionFileBlockType } from './file-types.js';
 
 export interface UploadOptions {
     /** Override the default Notion API version (default: '2026-03-11') */
