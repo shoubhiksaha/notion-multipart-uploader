@@ -47,7 +47,7 @@ Uploads data that is already in memory: a `Buffer`, `Uint8Array`, `ArrayBuffer`,
 
 ### `uploadStream(apiKey, stream, mimeType, filename, { size, ...options })`
 
-Uploads a stream without buffering the whole file, for example an incoming HTTP request or a download from S3, Google Drive or another Notion page. Accepts a Node.js `Readable`, a web `ReadableStream`, or any async iterable of bytes. `size` must be the exact length of the stream in bytes, because Notion needs the number of parts before the upload starts. At most `concurrency` parts (10 MiB each) are held in memory at once. If the stream turns out shorter or longer than `size`, the upload fails with `size_mismatch`.
+Uploads a stream without buffering the whole file, for example an incoming HTTP request or a download from S3, Google Drive or another Notion page. Accepts a Node.js `Readable`, a web `ReadableStream`, or any async iterable of bytes. `size` must be the exact length of the stream in bytes, because Notion needs the number of parts before the upload starts. At most `concurrency` parts (10 MiB each) are held in memory at once. If the stream turns out shorter or longer than `size`, the upload fails with `size_mismatch`. The upload waits for the end of the stream to confirm that, so a source that stays open after `size` bytes (such as a socket) has to be ended by you.
 
 ```javascript
 // Forward an upload from an HTTP request straight to Notion

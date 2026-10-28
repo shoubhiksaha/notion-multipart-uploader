@@ -47,8 +47,9 @@ jobs:
             echo "Tag $GITHUB_REF_NAME doesn't match mcp-server/package.json version $version"
             exit 1
           fi
-          # Installs the published library from the lockfile, so this tests exactly what users will get
-          npm ci
+          # No lockfile here on purpose: `npx -y notion-large-file-upload-mcp` resolves the dependency ranges
+          # fresh for every user, so testing against a fresh install tests exactly what users will get
+          npm install --no-package-lock
           npm test
           npm publish --provenance --access public
         env:

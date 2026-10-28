@@ -33,11 +33,13 @@ function getMimeType(filePath, providedMime) {
 const FILE_BLOCK_MIME_TYPES = ["image/vnd.dwg", "image/vnd.dxf"];
 
 function inferBlockType(mimeType) {
-  if (FILE_BLOCK_MIME_TYPES.includes(mimeType)) return "file";
-  if (mimeType.startsWith("video/")) return "video";
-  if (mimeType.startsWith("image/")) return "image";
-  if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType === "application/pdf") return "pdf";
+  // Agents sometimes pass "Video/MP4" or "image/png; charset=binary"
+  const type = String(mimeType).split(";")[0].trim().toLowerCase();
+  if (FILE_BLOCK_MIME_TYPES.includes(type)) return "file";
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("image/")) return "image";
+  if (type.startsWith("audio/")) return "audio";
+  if (type === "application/pdf") return "pdf";
   return "file";
 }
 
@@ -70,7 +72,8 @@ async function resolveUploadPath(filePath) {
 
 function validateAttachArgs({ blockId, blockType, caption }) {
   if (!blockId || typeof blockId !== "string") return "blockId must be a Notion page or block ID.";
-  if (blockType !== undefined && !BLOCK_TYPES.includes(blockType)) {
+  // null and "" mean "not given", which agents often send for optional parameters
+  if (blockType != null && blockType !== "" && !BLOCK_TYPES.includes(blockType)) {
     return `blockType must be one of: ${BLOCK_TYPES.join(", ")}.`;
   }
   if (caption !== undefined && (typeof caption !== "string" || caption.trim().length > MAX_CAPTION_LENGTH)) {

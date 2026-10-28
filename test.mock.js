@@ -842,3 +842,72 @@ test('Mock: filenames over Notion\'s 900-byte limit are rejected before contacti
     // Exactly 900 bytes is allowed
     await uploadToNotion("dummy-key", Buffer.from("x"), "text/plain", "a".repeat(896) + ".txt");
 });
+
+test('Mock: aborting while the stream source has stalled rejects immediately', async () => {
+    global.fetch = async (url) => {
+        if (url.endsWith('users/me')) return respond({});
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        return respond();
+    };
+
+    // Delivers the first part, then never produces more (like a download that stalls)
+    const stream = new Readable({ read() {} });
+    stream.push(Buffer.alloc(10 * MiB));
+
+    const controller = new AbortController();
+    const upload = uploadStream("dummy-key", stream, "video/mp4", "v.mp4", { size: 25 * MiB, signal: controller.signal });
+    await sleep(100); // Let the first part go out and the second read stall
+    controller.abort();
+    const start = Date.now();
+    await assert.rejects(upload, { code: "aborted" });
+    assert.ok(Date.now() - start < 200, "The upload kept waiting for the stalled source after the abort");
+    assert.strictEqual(stream.destroyed, true);
+});
+
+test('Mock: a non-JSON create response fails with invalid_response', async () => {
+    global.fetch = async () => respond("<html>captive portal</html>", 200);
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"),
+        { name: "NotionUploadError", code: "invalid_response" }
+    );
+});
+
+test('Mock: the workspace limit probe makes one attempt and does not delay the upload', async () => {
+    let probes = 0;
+    global.fetch = async (url) => {
+        if (url.endsWith('users/me')) {
+            probes++;
+            return respond("down", 503, { 'Retry-After': '5' });
+        }
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        return respond();
+    };
+
+    const start = Date.now();
+    await uploadToNotion("dummy-key", Buffer.alloc(21 * MiB), "video/mp4", "v.mp4");
+    assert.strictEqual(probes, 1);
+    assert.ok(Date.now() - start < 1000, "The failed probe was retried before the upload started");
+});
+
+test('Mock: uploadFile reads every part from the file it opened, even if the path is replaced', async () => {
+    const original = patternedBuffer(25 * MiB);
+    const file = tempFile("video.mp4", original);
+    const parts = new Map();
+    global.fetch = async (url, options) => {
+        if (url.endsWith('users/me')) return respond({});
+        if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+        if (url === 'mock-url') {
+            const part = Number(options.body.get('part_number'));
+            parts.set(part, Buffer.from(await options.body.get('file').arrayBuffer()));
+            // After the first part is sent, replace the file on disk with different content
+            if (part === 1) {
+                const replacement = tempFile("other.mp4", Buffer.alloc(25 * MiB, 0xff));
+                fs.renameSync(replacement, file);
+            }
+        }
+        return respond();
+    };
+
+    await uploadFile("dummy-key", file, "video/mp4", { concurrency: 1 });
+    assert.ok(Buffer.concat([parts.get(1), parts.get(2), parts.get(3)]).equals(original), "Parts were read from the replacement file");
+});

@@ -69,7 +69,7 @@ const CHUNK_SIZE = 10 * 1024 * 1024;
 const MAX_FILENAME_BYTES = 900;                // Including the extension, in UTF-8
 
 type UploadSource =
-    | { type: 'path', filePath: string, size: number }
+    | { type: 'file', handle: import('fs/promises').FileHandle, filePath: string, size: number }
     | { type: 'data', data: Blob | Uint8Array, size: number }
     | { type: 'stream', reader: StreamReader, size: number };
 
@@ -100,12 +100,18 @@ export async function uploadFile(
     const fs = await import('fs/promises');
     const pathModule = await import('path');
 
-    const stat = await fs.stat(filePath);
-    if (!stat.isFile()) throw new NotionUploadError(`Not a regular file: ${filePath}`, { code: 'not_a_file' });
-    if (stat.size === 0) throw new NotionUploadError(`File is empty: ${filePath}`, { code: 'empty_file' });
-    const filename = options.filename || pathModule.basename(filePath);
+    // One handle for the whole upload, so every part comes from the same file even if the path is replaced meanwhile
+    const handle = await fs.open(filePath, 'r');
+    try {
+        const stat = await handle.stat();
+        if (!stat.isFile()) throw new NotionUploadError(`Not a regular file: ${filePath}`, { code: 'not_a_file' });
+        if (stat.size === 0) throw new NotionUploadError(`File is empty: ${filePath}`, { code: 'empty_file' });
+        const filename = options.filename || pathModule.basename(filePath);
 
-    return uploadToNotionInternal(apiKey, { type: 'path', filePath, size: stat.size }, mimeType, filename, options);
+        return await uploadToNotionInternal(apiKey, { type: 'file', handle, filePath, size: stat.size }, mimeType, filename, options);
+    } finally {
+        await handle.close();
+    }
 }
 
 /**
@@ -138,6 +144,8 @@ export async function uploadToNotion(
  * Uploads a stream of known length to Notion without buffering the whole file,
  * e.g. an incoming HTTP request body or a download from another service.
  * At most `concurrency` parts (10 MiB each) are held in memory at once.
+ * The stream must end after exactly `size` bytes: the upload waits for the end of the stream
+ * to confirm the size, so a stream that stays open (such as a socket) must be ended by the caller.
  *
  * @param apiKey - Your Notion Integration Token
  * @param stream - A Node.js Readable, a web ReadableStream, or any async iterable of bytes
@@ -166,8 +174,9 @@ export async function uploadStream(
     try {
         return await uploadToNotionInternal(apiKey, { type: 'stream', reader, size }, mimeType, filename, options);
     } finally {
-        // Stops (and for Node.js streams, destroys) the source if the upload ended early
-        await reader.close();
+        // Stops (and for Node.js streams, destroys) the source if the upload ended early. Not awaited: a source
+        // that can't be stopped (an async generator stuck on an await) must not keep the caller waiting too.
+        reader.close().catch(() => {});
     }
 }
 
@@ -181,12 +190,26 @@ function toBinary(fileData: unknown): Blob | Uint8Array {
 
 // Reads exact-length chunks from an async iterable that yields arbitrarily sized pieces
 class StreamReader {
-    private readonly iterator: AsyncIterator<Uint8Array | string>;
+    private readonly next: () => Promise<IteratorResult<unknown>>;
+    private readonly stop: () => Promise<unknown>;
     private pending: Uint8Array = new Uint8Array(0);
     private finished = false;
 
     constructor(stream: StreamData) {
-        this.iterator = stream[Symbol.asyncIterator]();
+        // Async iterators can't be closed while a read is pending: `return()` waits for the stalled read.
+        // Web streams and Node.js streams have their own ways to stop, which work mid-read.
+        const source = stream as any;
+        if (typeof source.getReader === 'function') {
+            const reader = source.getReader();
+            this.next = () => reader.read();
+            this.stop = () => reader.cancel();
+        } else {
+            const iterator: AsyncIterator<unknown> = source[Symbol.asyncIterator]();
+            this.next = () => iterator.next();
+            this.stop = typeof source.destroy === 'function'
+                ? async () => { source.destroy(); }
+                : async () => { await iterator.return?.(); };
+        }
     }
 
     /** Reads `length` bytes, or fewer if the stream ends first */
@@ -210,14 +233,14 @@ class StreamReader {
     async close(): Promise<void> {
         if (this.finished) return;
         this.finished = true;
-        await this.iterator.return?.();
+        await this.stop();
     }
 
     // Makes sure `pending` has bytes unless the stream is finished
     private async fill(): Promise<boolean> {
         while (this.pending.byteLength === 0) {
             if (this.finished) return false;
-            const next = await this.iterator.next();
+            const next = await this.next();
             if (next.done) {
                 this.finished = true;
                 return false;
@@ -316,6 +339,17 @@ async function uploadToNotionInternal(
         uploadSignal.addEventListener("abort", onAbort, { once: true });
     });
 
+    // Rejects as soon as the upload is aborted, even if `promise` never settles
+    const abortable = <T>(promise: Promise<T>): Promise<T> => new Promise<T>((resolve, reject) => {
+        if (uploadSignal.aborted) {
+            promise.catch(() => {});
+            return reject(abortedError());
+        }
+        const onAbort = () => reject(abortedError());
+        uploadSignal.addEventListener("abort", onAbort, { once: true });
+        promise.then(resolve, reject).finally(() => uploadSignal.removeEventListener("abort", onAbort));
+    });
+
     // When Notion rate-limits one request, every worker waits until this time before sending more
     let rateLimitedUntil = 0;
 
@@ -326,7 +360,11 @@ async function uploadToNotionInternal(
     // through anyway. Retrying the upload's writes is still safe: a repeated create only leaves an unused
     // upload behind, which Notion expires, and `alreadyDone` lets a repeated send or complete that Notion
     // rejects check whether the earlier attempt went through.
-    const fetchWithRetry = async (url: string, fetchOptions: RequestInit, alreadyDone?: () => Promise<boolean>): Promise<string> => {
+    const fetchWithRetry = async (
+        url: string,
+        fetchOptions: RequestInit,
+        { alreadyDone, maxAttempts = totalAttempts }: { alreadyDone?: () => Promise<boolean>, maxAttempts?: number } = {}
+    ): Promise<string> => {
         // Set when an attempt failed in a way that doesn't tell us whether Notion processed it
         let outcomeUnknown = false;
         for (let attempt = 1; ; attempt++) {
@@ -350,7 +388,7 @@ async function uploadToNotionInternal(
                 body = await res.text();
             } catch (err) {
                 if (uploadSignal.aborted) throw abortedError();
-                if (attempt >= totalAttempts) {
+                if (attempt >= maxAttempts) {
                     throw timedOut
                         ? new NotionUploadError("Upload timed out", { code: 'timeout', retryable: true })
                         : new NotionUploadError(`Network error: ${(err as Error)?.message ?? err}`, { code: 'network_error', retryable: true, cause: err });
@@ -379,7 +417,7 @@ async function uploadToNotionInternal(
                 throw new NotionUploadError(`Notion API Error (${res.status}): ${body}`, { code: code ?? 'http_error', status: res.status });
             }
 
-            if (attempt >= totalAttempts) {
+            if (attempt >= maxAttempts) {
                 throw new NotionUploadError(`Notion API Failed (${res.status}): ${body}`, { code: code ?? 'http_error', status: res.status, retryable: true });
             }
 
@@ -415,10 +453,11 @@ async function uploadToNotionInternal(
     const checkWorkspaceLimit = async () => {
         let limit: unknown;
         try {
+            // One attempt only: if Notion is struggling, the create request below will retry anyway
             const me = JSON.parse(await fetchWithRetry("https://api.notion.com/v1/users/me", {
                 method: "GET",
                 headers: notionHeaders(false)
-            }));
+            }, { maxAttempts: 1 }));
             limit = me?.bot?.workspace_limits?.max_file_upload_size_in_bytes;
         } catch (err) {
             if (uploadSignal.aborted) throw err;
@@ -441,7 +480,8 @@ async function uploadToNotionInternal(
         if (source.type === 'stream') {
             const read = streamQueue.then(() => source.reader.read(end - start));
             streamQueue = read.catch(() => {});
-            const bytes = await read;
+            // A stalled source would otherwise keep this worker (and the whole upload) waiting after an abort
+            const bytes = await abortable(read);
             if (bytes.byteLength !== end - start) {
                 throw new NotionUploadError(`Stream ended after ${start + bytes.byteLength} bytes, but options.size is ${size}`, { code: 'size_mismatch' });
             }
@@ -451,29 +491,24 @@ async function uploadToNotionInternal(
             const chunk = data instanceof Uint8Array ? data.subarray(start, end) : data.slice(start, end);
             return new Blob([chunk as BlobPart], { type: contentType });
         } else {
-            const fs = await import('fs/promises');
-            const fileHandle = await fs.open(source.filePath, 'r');
-            try {
-                const length = end - start;
-                const buffer = Buffer.alloc(length);
-                // A single read may return fewer bytes than requested, so keep reading until the chunk is full
-                let filled = 0;
-                while (filled < length) {
-                    const { bytesRead } = await fileHandle.read(buffer, filled, length - filled, start + filled);
-                    if (bytesRead === 0) {
-                        throw new NotionUploadError(`File changed during upload (it is now smaller than ${size} bytes): ${source.filePath}`, { code: 'file_changed' });
-                    }
-                    filled += bytesRead;
+            const length = end - start;
+            const buffer = Buffer.alloc(length);
+            // A single read may return fewer bytes than requested, so keep reading until the chunk is full
+            let filled = 0;
+            while (filled < length) {
+                const { bytesRead } = await source.handle.read(buffer, filled, length - filled, start + filled);
+                if (bytesRead === 0) {
+                    throw new NotionUploadError(`File changed during upload (it is now smaller than ${size} bytes): ${source.filePath}`, { code: 'file_changed' });
                 }
-                return new Blob([buffer], { type: contentType });
-            } finally {
-                await fileHandle.close();
+                filled += bytesRead;
             }
+            return new Blob([buffer], { type: contentType });
         }
     };
 
+    // The stream must end after `size` bytes; this waits for that end, so the caller can't be surprised by truncation
     const ensureStreamFullyRead = async () => {
-        if (source.type === 'stream' && await source.reader.hasMore()) {
+        if (source.type === 'stream' && await abortable(source.reader.hasMore())) {
             throw new NotionUploadError(`Stream is longer than options.size (${size} bytes)`, { code: 'size_mismatch' });
         }
     };
@@ -499,14 +534,20 @@ async function uploadToNotionInternal(
         }
 
         // Step 1: Initialize the upload with Notion
-        const createData = JSON.parse(await fetchWithRetry("https://api.notion.com/v1/file_uploads", {
+        const createResponse = await fetchWithRetry("https://api.notion.com/v1/file_uploads", {
             method: "POST",
             headers: notionHeaders(true),
             body: JSON.stringify(createBody)
-        }));
-        const { id, upload_url, complete_url } = createData;
+        });
+        let createData: any;
+        try {
+            createData = JSON.parse(createResponse);
+        } catch {
+            createData = undefined;
+        }
+        const { id, upload_url, complete_url } = createData ?? {};
         if (!id || !upload_url) {
-            throw new NotionUploadError(`Unexpected response from Notion when creating the upload: ${JSON.stringify(createData)}`, { code: 'invalid_response' });
+            throw new NotionUploadError(`Unexpected response from Notion when creating the upload: ${createResponse.slice(0, 500)}`, { code: 'invalid_response' });
         }
 
         // After an attempt that may have gone through, Notion rejects a repeated send or complete because the
@@ -537,7 +578,7 @@ async function uploadToNotionInternal(
                 method: "POST",
                 headers: notionHeaders(false),
                 body: form
-            }, isUploaded);
+            }, { alreadyDone: isUploaded });
 
             reportProgress(size);
             return id;
@@ -595,7 +636,7 @@ async function uploadToNotionInternal(
             method: "POST",
             headers: notionHeaders(true),
             body: JSON.stringify({})
-        }, isUploaded);
+        }, { alreadyDone: isUploaded });
 
         return id;
     } finally {

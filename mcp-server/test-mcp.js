@@ -243,3 +243,19 @@ test("cancelling a tool call aborts the upload", async () => {
 });
 
 test.after(() => fs.rmSync(workDir, { recursive: true, force: true }));
+
+test("blockType null or empty means infer, and MIME types are matched case-insensitively", async () => {
+  const logPath = path.join(workDir, "infer.log");
+  await withServer({ MOCK_REQUEST_LOG: logPath }, async (client) => {
+    for (const blockType of [null, ""]) {
+      const result = await client.callTool({
+        name: "upload_and_attach_to_notion",
+        arguments: { filePath: pdfPath, blockId: "page_123", blockType, mimeType: "Application/PDF; charset=binary" }
+      });
+      assert.ok(!result.isError, textOf(result));
+    }
+  });
+  const appends = readRequestLog(logPath).filter((r) => /children$/.test(r.url));
+  assert.strictEqual(appends.length, 2);
+  assert.ok(appends.every((r) => r.body.children[0].type === "pdf"), "The block type was not inferred as pdf");
+});

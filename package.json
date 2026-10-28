@@ -1,6 +1,6 @@
 {
   "name": "notion-multipart-uploader",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "description": "Upload files larger than 20 MB (up to 5 GB) to Notion with the Notion API. Automatic multi-part uploads streamed from disk or any stream, with retries, rate-limit handling, progress and cancellation. Includes an MCP server for AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

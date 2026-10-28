@@ -30,5 +30,5 @@ Releases are published by the `Release` GitHub workflow when a version tag is pu
 The MCP server depends on the published library, so release the library first:
 
 1. Bump the library version (`npm version <version>`), update `CHANGELOG.md`, and push the commit and its `v<version>` tag. The workflow checks that the tag matches `package.json`, runs the tests, and publishes.
-2. In `mcp-server/`, update the `notion-multipart-uploader` dependency to the new version and run `npm install` to refresh `package-lock.json`.
+2. In `mcp-server/`, update the `notion-multipart-uploader` dependency range if the new version needs it. There is no lockfile in `mcp-server/` on purpose: `npx -y notion-large-file-upload-mcp` resolves the ranges fresh for every user, so the release workflow installs and tests the same way.
 3. Bump the version in `mcp-server/package.json` and in both `version` fields of `mcp-server/server.json` (the tests check they match), commit, and push an `mcp-v<version>` tag. The workflow tests the server against the published library, publishes it to npm, and then lists it in the [MCP Registry](https://registry.modelcontextprotocol.io) using the workflow's GitHub OIDC token, so no extra secret is needed.

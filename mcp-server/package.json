@@ -49,6 +49,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@notionhq/client": "^5.27.1",
-    "notion-multipart-uploader": "^2.5.0"
+    "notion-multipart-uploader": "^3.0.0"
   }
 }

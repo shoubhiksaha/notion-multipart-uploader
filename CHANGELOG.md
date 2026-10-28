@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.5.0] - Unreleased
+## [3.0.0] - Unreleased
 
 ### Added
 - `uploadFile(apiKey, path, mimeType, options)` method for bounded-memory file uploads, reading chunks natively from disk without blowing up memory. Ideal for huge files.
@@ -31,12 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `uploadFile` fails with a clear error if the file shrinks during the upload, instead of silently uploading zero-filled data.
 - Unsupported `fileBuffer` values (such as streams or plain objects) now throw a `TypeError` instead of a misleading "File buffer is empty" error or a corrupted upload.
 - A `429` saying the connection's API access is blocked (`public_api_request_blocked`) is no longer retried, as Notion's docs advise.
+- Aborting an `uploadStream` upload whose source has stalled now rejects immediately instead of waiting for the source.
+- A non-JSON success response to the create request now fails with `invalid_response` instead of a bare `SyntaxError`.
+- The MCP server treats `blockType: null` or `""` as "infer the type" and matches MIME types case-insensitively.
 - A send or complete that Notion processed but answered with a `5xx` or a timeout is no longer reported as failed. When the retry is rejected because the upload isn't pending anymore, the library checks the upload's status.
 
 ### Changed
-- Requires Node.js 20 or later.
+- **Breaking:** requires Node.js 20 or later.
 - Errors are now `NotionUploadError` instances. Messages are unchanged, except that network failures are wrapped as `Network error: ...` with the original error as `cause`.
-- `package.json` now has an `exports` map, so only the package root (and `package.json`) can be imported; deep imports such as `notion-multipart-uploader/dist/index.js` no longer work.
+- **Breaking:** `package.json` now has an `exports` map, so only the package root (and `package.json`) can be imported; deep imports such as `notion-multipart-uploader/dist/index.js` no longer work.
+- `uploadFile` keeps one file handle open for the whole upload instead of reopening the file for every part, so all parts come from the same file even if the path is replaced meanwhile.
+- The workspace-limit check (`GET /v1/users/me`) makes a single attempt instead of using the full retry budget.
+- `mcp-server/` no longer has a lockfile. `npx -y notion-large-file-upload-mcp` resolves the dependency ranges fresh for every user, so the release workflow installs and tests the same way.
 - `dist/` is no longer committed; it is built by the `prepare` script on install from git and before packing or publishing.
 
 ## [2.4.1] - 2026-09-08
