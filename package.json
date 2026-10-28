@@ -30,7 +30,7 @@
     "prepare": "npm run build",
     "test": "npm run build && node --test test.mock.js test.esm.mjs",
     "test:integration": "npm run build && node test.js",
-    "test:mcp": "rm -f mcp-server/*.tgz && npm pack --pack-destination mcp-server && cd mcp-server && npm install --no-save --no-package-lock ./notion-multipart-uploader-*.tgz && npm test",
+    "test:mcp": "npm run build && npm test -w mcp-server",
     "docs:llms": "node scripts/build-llms-full.js"
   },
   "keywords": [
@@ -68,5 +68,9 @@
   "devDependencies": {
     "@types/node": "^26.1.1",
     "typescript": "^7.0.2"
-  }
+  },
+  "workspaces": [
+    ".",
+    "mcp-server"
+  ]
 }

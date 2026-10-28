@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [3.0.0] - Unreleased
+## [Unreleased]
+
+### Changed
+- The repository is an npm workspace: one `npm install` at the root sets up the library and the MCP server, and the server is linked to the local library while developing. Nothing changes in the published packages.
+
+## [3.0.0] - 2026-10-28
 
 ### Added
 - `uploadFile(apiKey, path, mimeType, options)` method for bounded-memory file uploads, reading chunks natively from disk without blowing up memory. Ideal for huge files.

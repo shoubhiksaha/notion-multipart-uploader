@@ -44,15 +44,17 @@ jobs:
 
       - name: Publish notion-large-file-upload-mcp
         if: startsWith(github.ref_name, 'mcp-v')
-        working-directory: mcp-server
         run: |
-          version="mcp-v$(node -p "require('./package.json').version")"
+          version="mcp-v$(node -p "require('./mcp-server/package.json').version")"
           if [ "$version" != "$GITHUB_REF_NAME" ]; then
             echo "Tag $GITHUB_REF_NAME doesn't match mcp-server/package.json version $version"
             exit 1
           fi
-          # No lockfile here on purpose: `npx -y notion-large-file-upload-mcp` resolves the dependency ranges
-          # fresh for every user, so testing against a fresh install tests exactly what users will get
+          # Inside the repo, the workspace links the server to the local library. Users get the published
+          # library instead (`npx -y` resolves the ranges fresh), so the release is tested from a copy
+          # outside the repo, where npm installs from the registry exactly as it does for them.
+          cp -r mcp-server "$RUNNER_TEMP/mcp-server"
+          cd "$RUNNER_TEMP/mcp-server"
           npm install --no-package-lock
           npm test
           # The first version is published by hand (npm can't trust a workflow for a package that doesn't
@@ -71,6 +73,7 @@ jobs:
         env:
           MCP_PUBLISHER_VERSION: '1.8.6'
         run: |
+          # Runs in the repo's mcp-server/ because it only needs server.json
           base="https://github.com/modelcontextprotocol/registry/releases/download/v$MCP_PUBLISHER_VERSION"
           curl -fsSLO "$base/mcp-publisher_linux_amd64.tar.gz"
           curl -fsSLO "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"

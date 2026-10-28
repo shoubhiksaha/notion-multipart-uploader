@@ -31,7 +31,7 @@ jobs:
           node-version: 22
           cache: 'npm'
       - run: npm ci
-      # Runs the MCP server against this commit's library (packed like npm would publish it), not the npm release
+      # The workspace links the MCP server to this commit's library, so this catches library changes that break the server
       - run: npm run test:mcp
 
   integration:
