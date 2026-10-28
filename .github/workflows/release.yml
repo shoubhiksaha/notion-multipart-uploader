@@ -6,9 +6,12 @@ on:
   push:
     tags: [ 'v*', 'mcp-v*' ]
 
+# Both packages are published with npm trusted publishing: npmjs.com trusts this workflow file in this
+# repository (configured under each package's Settings -> Trusted Publisher), so there is no npm token
+# anywhere, and npm attaches provenance automatically.
 permissions:
   contents: read
-  # Lets npm publish with provenance and use npm trusted publishing (no long-lived token needed)
+  # Lets the job get the GitHub OIDC token that npm and the MCP Registry verify
   id-token: write
 
 jobs:
@@ -20,7 +23,6 @@ jobs:
         with:
           # npm 11.5.1+ is required for trusted publishing; Node 24 ships with it
           node-version: 24
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
       - run: npm ci
       - run: npm test
@@ -33,10 +35,12 @@ jobs:
             echo "Tag $GITHUB_REF_NAME doesn't match package.json version $version"
             exit 1
           fi
-          npm publish --provenance --access public
-        env:
-          # Only needed if trusted publishing isn't configured on npmjs.com
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Safe to re-run: a version that is already on npm is left alone
+          if npm view "notion-multipart-uploader@${version#v}" version >/dev/null 2>&1; then
+            echo "notion-multipart-uploader ${version#v} is already on npm, skipping publish"
+          else
+            npm publish --provenance --access public
+          fi
 
       - name: Publish notion-large-file-upload-mcp
         if: startsWith(github.ref_name, 'mcp-v')
@@ -51,9 +55,13 @@ jobs:
           # fresh for every user, so testing against a fresh install tests exactly what users will get
           npm install --no-package-lock
           npm test
-          npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # The first version is published by hand (npm can't trust a workflow for a package that doesn't
+          # exist yet), so this skips a version that is already on npm and goes on to the registry listing
+          if npm view "notion-large-file-upload-mcp@${version#mcp-v}" version >/dev/null 2>&1; then
+            echo "notion-large-file-upload-mcp ${version#mcp-v} is already on npm, skipping publish"
+          else
+            npm publish --provenance --access public
+          fi
 
       # Lists the server in the official MCP Registry (registry.modelcontextprotocol.io) from server.json.
       # The registry checks the npm package's mcpName, so this has to run after npm publish.

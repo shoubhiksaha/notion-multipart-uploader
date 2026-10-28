@@ -25,7 +25,7 @@ CI runs the same test on pushes to `main` once the `NOTION_KEY` and `NOTION_PAGE
 
 ## Releasing
 
-Releases are published by the `Release` GitHub workflow when a version tag is pushed. It publishes with npm provenance, using [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) if it's configured for the package on npmjs.com, or an `NPM_TOKEN` repository secret otherwise.
+Releases are published by the `Release` GitHub workflow when a version tag is pushed. It uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers), so there is no npm token to manage: each package's **Settings → Trusted Publisher** on npmjs.com names this repository and the `release.yml` workflow (with `npm publish` allowed), and npm adds provenance automatically. A trusted publisher that isn't used within 2 days of being configured expires and has to be set up again.
 
 The MCP server depends on the published library, so release the library first:
 
