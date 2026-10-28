@@ -1,6 +1,6 @@
 {
   "name": "notion-multipart-uploader",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Upload any binary file, up to 5 GB, to Notion with the Notion API. Fills the gap in the official SDK: automatic multi-part uploads streamed from disk or any stream, with retries, rate-limit handling, progress and cancellation. Includes an MCP server for AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
