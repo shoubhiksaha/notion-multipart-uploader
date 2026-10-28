@@ -1,5 +1,10 @@
 # notion-multipart-uploader
 
+[![npm version](https://img.shields.io/npm/v/notion-multipart-uploader.svg)](https://www.npmjs.com/package/notion-multipart-uploader)
+[![npm downloads](https://img.shields.io/npm/dm/notion-multipart-uploader.svg)](https://www.npmjs.com/package/notion-multipart-uploader)
+[![CI](https://github.com/shoubhiksaha/notion-multipart-uploader/actions/workflows/ci.yml/badge.svg)](https://github.com/shoubhiksaha/notion-multipart-uploader/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Upload any binary file, from a few bytes to 5 GB, to Notion with the Notion API, from Node.js or from AI agents. Notion accepts at most 20 MiB per request, so bigger files must be split into parts, sent and completed as a multi-part upload. This package does all of that for you, reading 10 MiB at a time from disk or from a stream, and returns a Notion `file_upload` ID that you can attach to pages, blocks, database properties, covers and comments. No S3 or public URLs needed, and no dependencies.
 
 It fills the gap left by the official SDK. `@notionhq/client` exposes the raw file-upload endpoints and stops there: it doesn't split files, its `send` call needs the whole file in memory, and the part numbering, retries and error handling are yours. Here the error-prone parts are handled for you: retries with backoff, rate limits, timeouts, matching content types on every part, and a clear error *before* uploading when Notion would reject the file (unsupported type, free-plan size limit, filename too long). Works for video, audio, images, PDFs, Office documents, archives and CAD drawings, in other words every type Notion accepts.
