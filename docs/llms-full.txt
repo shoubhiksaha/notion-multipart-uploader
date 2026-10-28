@@ -1,25 +1,39 @@
-# notion-multipart-uploader Docs
+# notion-multipart-uploader
 
-Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.
+> Upload files larger than 20 MB (up to 5 GB) to Notion with the Notion API, from Node.js or from AI agents through an MCP server. It runs Notion's multi-part upload (create, send parts, complete), reads from disk or any stream without loading the whole file into memory, handles retries, rate limits, progress and cancellation, and returns a file_upload ID to attach to pages, blocks, database properties, covers and comments.
 
-- [Uploading large files (Node.js)](upload-large-files.md)
-- [Attaching files to Notion](attach-to-notion.md)
-- [Using with AI Agents and MCP](ai-agents-mcp.md)
-- [Difference from @notionhq/client](differences-from-sdk.md)
+- Install: `npm install notion-multipart-uploader`. Node.js 20 or later, no dependencies, ESM and CommonJS, TypeScript types.
+- `uploadFile(apiKey, filePath)` uploads a file from disk. `uploadStream(apiKey, stream, mimeType, filename, { size })` uploads a stream of known size. `uploadToNotion(apiKey, data, mimeType, filename)` uploads a Buffer, Blob or string.
+- Notion's limits: 20 MiB per request, 5 GB per file on paid workspaces, 5 MiB per file on free workspaces. Uploads must be attached within one hour of being created.
+- MCP server for Claude Desktop, Claude Code and Cursor: `npx -y notion-large-file-upload-mcp`, configured with `NOTION_KEY` and `NOTION_UPLOAD_ALLOWED_DIRS`. It reads files from disk by path, so they don't pass through the model's context.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/README.md): Quick start, API, options, error codes and FAQ
+- [Uploading large files](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/upload-large-files.md): uploadFile and uploadStream examples, including copying a file from one Notion page to another
+- [Attaching files to Notion](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/attach-to-notion.md): Attaching an upload to blocks, files properties, page covers, icons and comments
+- [Using with AI agents and MCP](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/ai-agents-mcp.md): MCP server setup for Claude Desktop, Claude Code and Cursor, and its tools
+- [Differences from @notionhq/client](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/differences-from-sdk.md): What this package adds on top of the official SDK
+- [MCP server README](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/mcp-server/README.md): Configuration, tools and limitations of notion-large-file-upload-mcp
+
+## Optional
+
+- [All docs in one file](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/llms-full.txt)
+- [Changelog](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/CHANGELOG.md)
 
 ---
 
-# Uploading large files > 20MB with Node.js
+# Uploading large files over 20 MB to Notion with Node.js
 
-Use `uploadFile` to stream large files (up to 5GB) without blowing up memory.
+Notion's API accepts at most 20 MiB per request. Larger files, up to 5 GB on paid workspaces, have to be sent as a multi-part upload: create the upload with the number of parts, send each part, then complete it. `uploadFile` does all of that and reads the file 10 MiB at a time, so memory use stays low.
 
 ```javascript
 const { uploadFile } = require("notion-multipart-uploader");
 
 async function upload() {
   const fileId = await uploadFile(
-    process.env.NOTION_KEY, 
-    "./massive-video.mp4", 
+    process.env.NOTION_KEY,
+    "./massive-video.mp4",
     "video/mp4",
     { retries: 5, concurrency: 3 }
   );
@@ -27,41 +41,79 @@ async function upload() {
 }
 ```
 
-Reference: [Notion File Uploads API](https://developers.notion.com/docs/working-with-files-and-media)
+The MIME type is optional: `uploadFile(process.env.NOTION_KEY, "./massive-video.mp4")` infers `video/mp4` from the extension.
+
+Free workspaces accept files up to 5 MiB. The upload fails with `file_too_large` before sending anything if the file is over the workspace's limit.
+
+## Streaming from another source
+
+If the file isn't on disk, for example an incoming HTTP request or a download from another service, use `uploadStream` with the stream's exact size:
+
+```javascript
+const { uploadStream } = require("notion-multipart-uploader");
+
+const fileId = await uploadStream(process.env.NOTION_KEY, req, "video/mp4", "recording.mp4", {
+  size: Number(req.headers["content-length"])
+});
+```
+
+To copy a file that's already in Notion, download its URL (valid for an hour) and pass the response body to `uploadStream`:
+
+```javascript
+const res = await fetch(block.video.file.url);
+const fileId = await uploadStream(process.env.NOTION_KEY, res.body, res.headers.get("content-type"), "recording.mp4", {
+  size: Number(res.headers.get("content-length"))
+});
+```
+
+Attach the returned ID within an hour of starting the upload. See [Attaching files to Notion](attach-to-notion.md).
+
+Reference: [Uploading larger files](https://developers.notion.com/guides/data-apis/sending-larger-files)
 
 ---
 
 # Attaching files to Notion
 
-Once you have a `file_upload` ID, attach it using the official `@notionhq/client`.
+Once you have a `file_upload` ID, attach it with the official `@notionhq/client`. Attach it within an hour: Notion sets each upload's `expiry_time` to one hour after it's created, and an expired upload can't be attached.
 
 ```javascript
 const { Client } = require("@notionhq/client");
 const notion = new Client({ auth: process.env.NOTION_KEY });
 
+const { inferBlockType } = require("notion-multipart-uploader");
+
+const file = { type: "file_upload", file_upload: { id: fileId } };
+
+// As a block on a page: image, video, audio, pdf or file. inferBlockType picks the right one for the file.
+const blockType = inferBlockType("recording.mp4"); // "video"
 await notion.blocks.children.append({
   block_id: "your_page_id",
-  children: [{
-    type: "video",
-    video: {
-      type: "file_upload",
-      file_upload: { id: fileId }
-    }
-  }]
+  children: [{ type: blockType, [blockType]: file }]
 });
+
+// In a database's "Files & media" property
+await notion.pages.update({
+  page_id: "your_page_id",
+  properties: { Attachments: { files: [{ ...file, name: "report.pdf" }] } }
+});
+
+// As a page cover (page icons work the same way)
+await notion.pages.update({ page_id: "your_page_id", cover: file });
 ```
 
-Reference: [Notion Blocks API](https://developers.notion.com/reference/block)
+Comments accept up to three uploads through the `attachments` parameter of [Create comment](https://developers.notion.com/reference/create-a-comment).
+
+Reference: [Working with files and media](https://developers.notion.com/guides/data-apis/working-with-files-and-media), [File upload object](https://developers.notion.com/reference/file-upload)
 
 ---
 
 # Using with AI Agents and MCP
 
-Standard Notion MCP servers can only upload files up to 20 MiB. AI generated videos, audio, datasets, and complex exports often exceed this limit.
+Notion's hosted MCP server uploads files up to 20 MiB, and Notion's open-source MCP server no longer accepts uploads. Screen recordings, meeting audio, test screenshots and exported reports from AI workflows are often larger. Some other MCP servers can send larger files, but only by having the agent pass the file through the conversation as base64, which fills the model's context window.
 
 ## Companion MCP Server: `notion-large-file-upload-mcp`
 
-You can connect AI agents (Claude Desktop, Cursor, Zed, Claude Code) directly to our companion MCP server.
+The companion MCP server uploads local files of up to 5 GB to Notion by path. It reads the file from disk, so the file never passes through the model. It works with MCP clients that run local servers, such as Claude Desktop, Claude Code, Cursor and Zed.
 
 ### Quick Setup
 
@@ -73,7 +125,8 @@ You can connect AI agents (Claude Desktop, Cursor, Zed, Claude Code) directly to
       "command": "npx",
       "args": ["-y", "notion-large-file-upload-mcp"],
       "env": {
-        "NOTION_KEY": "secret_your_notion_api_key"
+        "NOTION_KEY": "secret_your_notion_api_key",
+        "NOTION_UPLOAD_ALLOWED_DIRS": "/Users/me/Videos/exports"
       }
     }
   }
@@ -83,20 +136,40 @@ You can connect AI agents (Claude Desktop, Cursor, Zed, Claude Code) directly to
 #### Cursor IDE
 1. Go to **Settings** -> **Features** -> **MCP**.
 2. Click **Add New MCP Server**.
-3. Set type to `command`, command to `npx -y notion-large-file-upload-mcp`, and add `NOTION_KEY`.
+3. Set type to `command`, command to `npx -y notion-large-file-upload-mcp`, and add `NOTION_KEY` and `NOTION_UPLOAD_ALLOWED_DIRS`.
+
+#### Claude Code
+```bash
+claude mcp add notion-large-files -e NOTION_KEY=secret_... -e NOTION_UPLOAD_ALLOWED_DIRS=/path/to/exports -- npx -y notion-large-file-upload-mcp
+```
+
+### Restricting which files can be uploaded
+`NOTION_UPLOAD_ALLOWED_DIRS` is required. Set it to the folders your agent writes to (separated by `:`, or `;` on Windows) so a prompt injection can't make the server upload files such as `~/.ssh/id_rsa` or `.env`.
 
 ### Available MCP Tools
 - `upload_large_file_to_notion`: Uploads any local file up to 5 GB to Notion using streaming multipart chunking. Returns the file ID.
-- `upload_and_attach_to_notion`: Uploads and immediately creates a child block (`video`, `pdf`, `image`, `audio`, `file`) on a Notion page.
+- `upload_and_attach_to_notion`: Uploads and immediately creates a child block (`video`, `pdf`, `image`, `audio`, `file`) on a Notion page. If attaching fails, the error includes the file ID so the agent can retry the attachment without uploading again.
+- `attach_file_upload_to_notion`: Attaches an already uploaded file ID as a block. Notion expires uploads that aren't attached within an hour.
+
+### Limitations
+- The server reads files from the computer it runs on. Files attached in a chat on claude.ai or ChatGPT aren't on that disk, and web and mobile apps can't run local MCP servers.
+- Free Notion workspaces accept files up to 5 MiB. The server reports this before uploading.
 
 ---
 
 # Differences from @notionhq/client
 
+The official SDK exposes Notion's file upload endpoints (`fileUploads.create`, `send`, `complete`). `notion-multipart-uploader` builds the whole upload on top of the same API.
+
 | Feature | @notionhq/client | notion-multipart-uploader |
 |---|---|---|
-| Single-part (<= 20 MiB) | Supported | Supported |
-| Multi-part (> 20 MiB) | Endpoints only | Fully automated chunking |
-| Large file memory | Loads into RAM | `uploadFile` streams from disk |
-| Retry limits | Basic | Exponential backoff, jitter, `Retry-After`, `529` handling |
-| Concurrency | None | Concurrent chunk uploads |
+| Single-part uploads (20 MiB or less) | You call create, then send | One call |
+| Multi-part uploads (over 20 MiB) | You split the file, number and send each part, then call complete | One call, parts sent in parallel |
+| Memory use for large files | You read and slice the file yourself | Reads 10 MiB at a time from disk or from a stream |
+| Rate limits (`429`, `529`) | Retried, waiting for `Retry-After` | Retried, and all parallel parts pause together |
+| Timeouts and network errors on parts | Up to you | Retried with backoff |
+| A send or complete that went through despite an error | Up to you | Detected by checking the upload's status |
+| Unsupported file types, long filenames, workspace size limit | Reported by Notion's API as errors | Checked before uploading, with a specific error `code` for each |
+| Progress and cancellation | Up to you | `onProgress` and `signal` options |
+
+Use the SDK to attach the returned `file_upload` ID to pages, blocks and properties. See [Attaching files to Notion](attach-to-notion.md).

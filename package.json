@@ -1,39 +1,57 @@
 {
   "name": "notion-multipart-uploader",
-  "version": "2.4.1",
-  "description": "Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.",
+  "version": "3.0.0",
+  "description": "Upload files larger than 20 MB (up to 5 GB) to Notion with the Notion API. Automatic multi-part uploads streamed from disk or any stream, with retries, rate-limit handling, progress and cancellation. Includes an MCP server for AI agents.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build",
-    "test": "npm run build && node --test test.mock.js",
-    "test:integration": "node test.js"
+    "prepare": "npm run build",
+    "test": "npm run build && node --test test.mock.js test.esm.mjs",
+    "test:integration": "npm run build && node test.js",
+    "test:mcp": "rm -f mcp-server/*.tgz && npm pack --pack-destination mcp-server && cd mcp-server && npm install --no-save --no-package-lock ./notion-multipart-uploader-*.tgz && npm test",
+    "docs:llms": "node scripts/build-llms-full.js"
   },
   "keywords": [
     "notion",
     "notion-api",
-    "notion-sdk",
-    "multipart",
-    "form-data",
-    "upload",
-    "audio",
-    "image",
-    "pdf",
+    "notion-upload",
     "notion-file-upload",
-    "notion-file-uploads",
-    "multipart-upload",
+    "file-upload",
     "large-file-upload",
+    "upload-large-files",
+    "multipart-upload",
+    "multi-part",
+    "chunked-upload",
+    "streaming",
+    "upload-stream",
     "notion-mcp",
     "mcp",
+    "ai-agents",
+    "notion-sdk",
+    "attachments",
+    "video-upload",
     "typescript",
     "nodejs"
   ],

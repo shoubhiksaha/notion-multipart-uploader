@@ -5,15 +5,51 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [ 20, 22, 24 ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+
+  mcp-server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: 22
           cache: 'npm'
       - run: npm ci
-      - run: npm test
+      # Runs the MCP server against this commit's library (packed like npm would publish it), not the npm release
+      - run: npm run test:mcp
+
+  integration:
+    # Uploads to a real Notion workspace, so it only runs on main and manual runs (pull requests from forks get no secrets)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      NOTION_KEY: ${{ secrets.NOTION_KEY }}
+      NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+      NOTION_TEST_LARGE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+      - run: npm ci
+      - name: Run live Notion tests
+        # Skipped until the NOTION_KEY and NOTION_PAGE_ID repository secrets are set
+        if: env.NOTION_KEY != '' && env.NOTION_PAGE_ID != ''
+        run: npm run test:integration

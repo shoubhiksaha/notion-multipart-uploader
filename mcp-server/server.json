@@ -1,0 +1,38 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.shoubhiksaha/notion-large-file-upload",
+  "title": "Notion Large File Upload",
+  "description": "Upload local files up to 5 GB to Notion and attach them to pages, read from disk, not the chat.",
+  "repository": {
+    "url": "https://github.com/shoubhiksaha/notion-multipart-uploader",
+    "source": "github",
+    "subfolder": "mcp-server"
+  },
+  "websiteUrl": "https://github.com/shoubhiksaha/notion-multipart-uploader/tree/main/mcp-server#readme",
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "notion-large-file-upload-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "NOTION_KEY",
+          "description": "Notion integration token. The integration needs access to the pages you attach files to.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "NOTION_UPLOAD_ALLOWED_DIRS",
+          "description": "Folders the server may upload files from, separated by : (; on Windows). Uploads are refused until this is set.",
+          "isRequired": true,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

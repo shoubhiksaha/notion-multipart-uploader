@@ -3,21 +3,22 @@
 [![npm version](https://img.shields.io/npm/v/notion-large-file-upload-mcp.svg)](https://www.npmjs.com/package/notion-large-file-upload-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-A Model Context Protocol (MCP) server that empowers AI agents (Claude Desktop, Cursor, Zed, Claude Code) to upload large files (**> 20 MiB up to 5 GB**) directly to Notion using streaming multipart chunking.
+An MCP server that lets AI agents (Claude Desktop, Claude Code, Cursor, Zed) upload local files of **up to 5 GB** to Notion and attach them to pages. It reads each file from disk by path, so the file never passes through the model's context.
 
 ---
 
 ### Why this server is needed
 
-Official Notion MCP servers and standard client upload APIs **cap out at 20 MiB** for single uploads.
-
-When autonomous AI workflows generate local assets (video recordings, screen captures, audio podcasts, large datasets, or PDFs over 20 MiB), standard MCP tools fail.
+- **Notion's hosted MCP server stops at 20 MiB.** Its `notion-create-file-upload` tool only does single-part uploads, and Notion's open-source MCP server no longer accepts uploads at all.
+- **Base64 fills the context window.** Some MCP servers can send larger files, but the agent has to pass the file through the conversation as base64, which uses up the model's context after a few files.
+- **Agents give up on big files.** Without a way to upload them, agents fall back to thumbnails or links instead of the screen recording, meeting audio, test screenshots or PDF report they produced.
 
 `notion-large-file-upload-mcp` wraps [`notion-multipart-uploader`](https://www.npmjs.com/package/notion-multipart-uploader) to provide:
 - **Streaming 10 MiB chunking**: Does not load 5 GB files into RAM.
 - **Concurrent chunk uploads**: Parallelizes multi-part uploads with worker queues.
 - **Resilient retry engine**: Automatically handles rate limits (`429`), server overload (`529`), exponential backoff with jitter, and `Retry-After` headers.
-- **Direct Block Attachment**: Can attach the uploaded asset directly to pages, databases, or blocks (`video`, `pdf`, `image`, `audio`, `file`).
+- **Direct Block Attachment**: Can attach the uploaded asset to a page or block as a `video`, `pdf`, `image`, `audio` or `file` block.
+- **Progress and cancellation**: Reports MCP progress notifications while uploading and stops the upload when the client cancels the tool call.
 
 ---
 
@@ -34,7 +35,8 @@ Add this to your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["-y", "notion-large-file-upload-mcp"],
       "env": {
-        "NOTION_KEY": "secret_your_notion_integration_token"
+        "NOTION_KEY": "secret_your_notion_integration_token",
+        "NOTION_UPLOAD_ALLOWED_DIRS": "/Users/me/Videos/exports:/Users/me/Documents/reports"
       }
     }
   }
@@ -55,22 +57,39 @@ Config location:
    - **Name**: `notion-large-files`
    - **Type**: `command`
    - **Command**: `npx -y notion-large-file-upload-mcp`
-   - **Environment Variables**: `NOTION_KEY=secret_...`
+   - **Environment Variables**: `NOTION_KEY=secret_...` and `NOTION_UPLOAD_ALLOWED_DIRS=/path/to/exports`
 
 ---
 
 ### 3. Claude Code / CLI
 
 ```bash
-claude mcp add notion-large-files npx -y notion-large-file-upload-mcp -e NOTION_KEY=secret_...
+claude mcp add notion-large-files -e NOTION_KEY=secret_... -e NOTION_UPLOAD_ALLOWED_DIRS=/path/to/exports -- npx -y notion-large-file-upload-mcp
 ```
+
+---
+
+## Configuration
+
+| Environment variable | Required | Description |
+|---|---|---|
+| `NOTION_KEY` | **Yes** | Notion integration token. `NOTION_API_KEY` and `NOTION_TOKEN` are also accepted. |
+| `NOTION_UPLOAD_ALLOWED_DIRS` | **Yes** | Directories files may be uploaded from, separated by `:` (`;` on Windows). The upload tools refuse to run without it. |
+
+### Restricting which files can be uploaded
+
+The tools read files from the machine the server runs on. Without a limit, an agent that is tricked by a prompt injection could upload sensitive files such as `~/.ssh/id_rsa` or `.env` to Notion. That's why `NOTION_UPLOAD_ALLOWED_DIRS` is required: set it to the folders your agent actually produces files in.
+
+Paths must be absolute, and symlinks are resolved before the check, so a link inside an allowed folder can't point outside it. A link that stays inside an allowed folder is uploaded under the link's name.
+
+Before uploading, the server also checks that Notion supports the file type and that the file fits the workspace's upload limit (5 MiB per file on free workspaces), so the agent gets a clear error instead of a failed multi-GB upload.
 
 ---
 
 ## Available Tools
 
 ### `upload_large_file_to_notion`
-Uploads a local file over 20 MiB (up to 5 GB) to Notion and returns the Notion `file_upload` ID.
+Uploads a local file of any size up to 5 GB to Notion and returns the Notion `file_upload` ID.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -88,7 +107,31 @@ Uploads the local file and immediately creates a child block on the target Notio
 | `blockId` | string | **Yes** | Target Notion Page ID or parent Block ID |
 | `blockType` | string | No | `video`, `pdf`, `image`, `audio`, or `file` (inferred from MIME if omitted) |
 | `mimeType` | string | No | MIME type (inferred if omitted) |
-| `caption` | string | No | Optional caption text displayed under the block |
+| `caption` | string | No | Optional caption text displayed under the block (up to 2,000 characters) |
+
+If the upload succeeds but attaching fails (for example, the page isn't shared with the integration), the error includes the file ID so the agent can retry with `attach_file_upload_to_notion` instead of uploading again.
+
+---
+
+### `attach_file_upload_to_notion`
+Attaches an already uploaded file to a Notion page or block. Notion expires uploads that aren't attached within an hour of being created.
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `fileUploadId` | string | **Yes** | The `file_upload` ID returned by an upload tool |
+| `blockId` | string | **Yes** | Target Notion Page ID or parent Block ID |
+| `blockType` | string | **Yes** | `video`, `pdf`, `image`, `audio`, or `file` |
+| `caption` | string | No | Optional caption text displayed under the block (up to 2,000 characters) |
+
+---
+
+## Limitations
+
+- The server reads files from the computer it runs on, so it needs an MCP client that runs local servers. Files attached in a chat on claude.ai or ChatGPT aren't on that disk.
+- Free Notion workspaces accept files up to 5 MiB. Paid plans allow up to 5 GB.
+- Each upload has to be attached within an hour of starting, so a 5 GB file needs about 12 Mbit/s of upload bandwidth.
+
+Its name in the [MCP Registry](https://registry.modelcontextprotocol.io) is `io.github.shoubhiksaha/notion-large-file-upload`.
 
 ---
 
@@ -96,10 +139,14 @@ Uploads the local file and immediately creates a child block on the target Notio
 
 ```bash
 git clone https://github.com/shoubhiksaha/notion-multipart-uploader.git
-cd notion-multipart-uploader/mcp-server
+cd notion-multipart-uploader
 npm install
-NOTION_KEY="secret_..." node index.js
+# Packs the library from this checkout, installs it into mcp-server and runs the MCP tests
+npm run test:mcp
+NOTION_KEY="secret_..." node mcp-server/index.js
 ```
+
+The tests start the server over stdio with a fake Notion API, so they don't need a token or network access.
 
 ## License
 

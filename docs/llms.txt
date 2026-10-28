@@ -1,8 +1,22 @@
-# notion-multipart-uploader Docs
+# notion-multipart-uploader
 
-Production multipart uploader for the Notion API. Upload local files over 20 MiB without external hosting—automatic 10 MiB chunking, progress, retries, cancellation, and concurrent part uploads. Returns a Notion file_upload ID ready to attach to pages and blocks.
+> Upload files larger than 20 MB (up to 5 GB) to Notion with the Notion API, from Node.js or from AI agents through an MCP server. It runs Notion's multi-part upload (create, send parts, complete), reads from disk or any stream without loading the whole file into memory, handles retries, rate limits, progress and cancellation, and returns a file_upload ID to attach to pages, blocks, database properties, covers and comments.
 
-- [Uploading large files (Node.js)](upload-large-files.md)
-- [Attaching files to Notion](attach-to-notion.md)
-- [Using with AI Agents and MCP](ai-agents-mcp.md)
-- [Difference from @notionhq/client](differences-from-sdk.md)
+- Install: `npm install notion-multipart-uploader`. Node.js 20 or later, no dependencies, ESM and CommonJS, TypeScript types.
+- `uploadFile(apiKey, filePath)` uploads a file from disk. `uploadStream(apiKey, stream, mimeType, filename, { size })` uploads a stream of known size. `uploadToNotion(apiKey, data, mimeType, filename)` uploads a Buffer, Blob or string.
+- Notion's limits: 20 MiB per request, 5 GB per file on paid workspaces, 5 MiB per file on free workspaces. Uploads must be attached within one hour of being created.
+- MCP server for Claude Desktop, Claude Code and Cursor: `npx -y notion-large-file-upload-mcp`, configured with `NOTION_KEY` and `NOTION_UPLOAD_ALLOWED_DIRS`. It reads files from disk by path, so they don't pass through the model's context.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/README.md): Quick start, API, options, error codes and FAQ
+- [Uploading large files](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/upload-large-files.md): uploadFile and uploadStream examples, including copying a file from one Notion page to another
+- [Attaching files to Notion](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/attach-to-notion.md): Attaching an upload to blocks, files properties, page covers, icons and comments
+- [Using with AI agents and MCP](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/ai-agents-mcp.md): MCP server setup for Claude Desktop, Claude Code and Cursor, and its tools
+- [Differences from @notionhq/client](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/differences-from-sdk.md): What this package adds on top of the official SDK
+- [MCP server README](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/mcp-server/README.md): Configuration, tools and limitations of notion-large-file-upload-mcp
+
+## Optional
+
+- [All docs in one file](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/docs/llms-full.txt)
+- [Changelog](https://raw.githubusercontent.com/shoubhiksaha/notion-multipart-uploader/main/CHANGELOG.md)
