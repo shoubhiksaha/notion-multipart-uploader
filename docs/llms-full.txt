@@ -1,6 +1,6 @@
 # notion-multipart-uploader
 
-> Upload files larger than 20 MB (up to 5 GB) to Notion with the Notion API, from Node.js or from AI agents through an MCP server. It runs Notion's multi-part upload (create, send parts, complete), reads from disk or any stream without loading the whole file into memory, handles retries, rate limits, progress and cancellation, and returns a file_upload ID to attach to pages, blocks, database properties, covers and comments.
+> Upload any binary file, from a few bytes to 5 GB, to Notion with the Notion API, from Node.js or from AI agents through an MCP server. It fills the gap left by the official SDK, which exposes the raw file-upload endpoints but doesn't split files, needs the whole file in memory, and leaves retries and error handling to you. It runs Notion's multi-part upload (create, send parts, complete), reads from disk or any stream without loading the whole file into memory, handles retries, rate limits, progress and cancellation, and returns a file_upload ID to attach to pages, blocks, database properties, covers and comments.
 
 - Install: `npm install notion-multipart-uploader`. Node.js 20 or later, no dependencies, ESM and CommonJS, TypeScript types.
 - `uploadFile(apiKey, filePath)` uploads a file from disk. `uploadStream(apiKey, stream, mimeType, filename, { size })` uploads a stream of known size. `uploadToNotion(apiKey, data, mimeType, filename)` uploads a Buffer, Blob or string.
