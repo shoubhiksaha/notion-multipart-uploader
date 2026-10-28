@@ -140,13 +140,12 @@ Its name in the [MCP Registry](https://registry.modelcontextprotocol.io) is `io.
 ```bash
 git clone https://github.com/shoubhiksaha/notion-multipart-uploader.git
 cd notion-multipart-uploader
-npm install
-# Packs the library from this checkout, installs it into mcp-server and runs the MCP tests
-npm run test:mcp
-NOTION_KEY="secret_..." node mcp-server/index.js
+npm install          # one install for the library and the server (npm workspace)
+npm run test:mcp     # builds the library and runs the server's tests against it
+NOTION_KEY="secret_..." NOTION_UPLOAD_ALLOWED_DIRS="$PWD" npm start -w mcp-server
 ```
 
-The tests start the server over stdio with a fake Notion API, so they don't need a token or network access.
+The server is linked to the library in this checkout, so a change to the library is picked up as soon as it's built. The tests start the server over stdio with a fake Notion API, so they don't need a token or network access. See [CONTRIBUTING.md](../CONTRIBUTING.md) for the release process.
 
 ## License
 

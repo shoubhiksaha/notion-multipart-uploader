@@ -3,4 +3,3 @@ dist
 *.tgz
 .env
 .DS_Store
-mcp-server/package-lock.json
