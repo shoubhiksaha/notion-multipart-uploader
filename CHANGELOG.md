@@ -15,11 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `uploadToNotion` accepts `ArrayBuffer` and other typed array views, and encodes strings as UTF-8.
 - `uploadStream(apiKey, stream, mimeType, filename, { size })` uploads Node.js streams, web `ReadableStream`s and async iterables without buffering the whole file.
 - `NotionUploadError` with `code`, `status` and `retryable`, thrown for every failed upload.
-- `preflight` option (on by default): rejects file types Notion doesn't support, and files larger than the workspace's upload limit, before uploading anything.
+- `preflight` option (on by default): rejects file types Notion doesn't support, filenames over Notion's 900-byte limit (`filename_too_long`), and files larger than the workspace's upload limit, before uploading anything.
 - `uploadFile`'s `mimeType` is optional and inferred from the file extension; new `filename` option to change the name shown in Notion.
 - `inferMimeType` and `isSupportedFileType` helpers based on Notion's supported file types.
 - ES module entry point (`import { uploadFile } from "notion-multipart-uploader"`) that shares one copy of the code with `require`.
 - When Notion responds with `429`, all parallel parts pause until `Retry-After` has passed instead of only the rate-limited one.
+- Uses the wait in the response body (`additional_data.retry_after`) when a `429` or `529` has no `Retry-After` header.
+- The MCP server has a `server.json` and `mcpName` so releases are listed in the official MCP Registry.
 
 ### Fixed
 - When one part of a multi-part upload failed, the other workers kept uploading the remaining parts after the promise had rejected. The upload now stops all workers and waits for them before rejecting.
@@ -28,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `uploadFile` rejects empty files and directories before contacting Notion.
 - `uploadFile` fails with a clear error if the file shrinks during the upload, instead of silently uploading zero-filled data.
 - Unsupported `fileBuffer` values (such as streams or plain objects) now throw a `TypeError` instead of a misleading "File buffer is empty" error or a corrupted upload.
+- A `429` saying the connection's API access is blocked (`public_api_request_blocked`) is no longer retried, as Notion's docs advise.
+- A send or complete that Notion processed but answered with a `5xx` or a timeout is no longer reported as failed. When the retry is rejected because the upload isn't pending anymore, the library checks the upload's status.
 
 ### Changed
 - Requires Node.js 20 or later.

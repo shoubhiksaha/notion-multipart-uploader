@@ -1,7 +1,8 @@
 {
   "name": "notion-large-file-upload-mcp",
   "version": "1.0.0",
-  "description": "Model Context Protocol (MCP) server for uploading large files (>20 MiB up to 5 GB) to Notion without external storage.",
+  "mcpName": "io.github.shoubhiksaha/notion-large-file-upload",
+  "description": "MCP server that uploads local files up to 5 GB to Notion and attaches them to pages, for Claude Desktop, Claude Code, Cursor and other AI agents. Reads files from disk, not through the chat.",
   "main": "index.js",
   "bin": {
     "notion-large-file-upload-mcp": "./index.js"
@@ -19,13 +20,18 @@
   },
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "notion",
     "notion-api",
     "notion-mcp",
+    "notion-upload",
+    "file-upload",
     "large-files",
     "multipart-upload",
+    "claude",
     "claude-desktop",
+    "claude-code",
     "cursor",
     "ai-agents"
   ],

@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag to publish: vX.Y.Z publishes notion-multipart-uploader,
-# mcp-vX.Y.Z publishes notion-large-file-upload-mcp from mcp-server/.
+# mcp-vX.Y.Z publishes notion-large-file-upload-mcp from mcp-server/ to npm and the MCP Registry.
 on:
   push:
     tags: [ 'v*', 'mcp-v*' ]
@@ -53,3 +53,20 @@ jobs:
           npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Lists the server in the official MCP Registry (registry.modelcontextprotocol.io) from server.json.
+      # The registry checks the npm package's mcpName, so this has to run after npm publish.
+      - name: Publish notion-large-file-upload-mcp to the MCP Registry
+        if: startsWith(github.ref_name, 'mcp-v')
+        working-directory: mcp-server
+        env:
+          MCP_PUBLISHER_VERSION: '1.8.6'
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v$MCP_PUBLISHER_VERSION"
+          curl -fsSLO "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSLO "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          sha256sum --check --ignore-missing "registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+          # Uses this workflow's GitHub OIDC token, which may publish io.github.shoubhiksaha/* names
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

@@ -3,21 +3,21 @@
 [![npm version](https://img.shields.io/npm/v/notion-large-file-upload-mcp.svg)](https://www.npmjs.com/package/notion-large-file-upload-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-A Model Context Protocol (MCP) server that empowers AI agents (Claude Desktop, Cursor, Zed, Claude Code) to upload large files (**> 20 MiB up to 5 GB**) directly to Notion using streaming multipart chunking.
+An MCP server that lets AI agents (Claude Desktop, Claude Code, Cursor, Zed) upload local files of **up to 5 GB** to Notion and attach them to pages. It reads each file from disk by path, so the file never passes through the model's context.
 
 ---
 
 ### Why this server is needed
 
-Official Notion MCP servers and standard client upload APIs **cap out at 20 MiB** for single uploads.
-
-When autonomous AI workflows generate local assets (video recordings, screen captures, audio podcasts, large datasets, or PDFs over 20 MiB), standard MCP tools fail.
+- **Notion's hosted MCP server stops at 20 MiB.** Its `notion-create-file-upload` tool only does single-part uploads, and Notion's open-source MCP server no longer accepts uploads at all.
+- **Base64 fills the context window.** Some MCP servers can send larger files, but the agent has to pass the file through the conversation as base64, which uses up the model's context after a few files.
+- **Agents give up on big files.** Without a way to upload them, agents fall back to thumbnails or links instead of the screen recording, meeting audio, test screenshots or PDF report they produced.
 
 `notion-large-file-upload-mcp` wraps [`notion-multipart-uploader`](https://www.npmjs.com/package/notion-multipart-uploader) to provide:
 - **Streaming 10 MiB chunking**: Does not load 5 GB files into RAM.
 - **Concurrent chunk uploads**: Parallelizes multi-part uploads with worker queues.
 - **Resilient retry engine**: Automatically handles rate limits (`429`), server overload (`529`), exponential backoff with jitter, and `Retry-After` headers.
-- **Direct Block Attachment**: Can attach the uploaded asset directly to pages, databases, or blocks (`video`, `pdf`, `image`, `audio`, `file`).
+- **Direct Block Attachment**: Can attach the uploaded asset to a page or block as a `video`, `pdf`, `image`, `audio` or `file` block.
 - **Progress and cancellation**: Reports MCP progress notifications while uploading and stops the upload when the client cancels the tool call.
 
 ---
@@ -89,7 +89,7 @@ Before uploading, the server also checks that Notion supports the file type and 
 ## Available Tools
 
 ### `upload_large_file_to_notion`
-Uploads a local file over 20 MiB (up to 5 GB) to Notion and returns the Notion `file_upload` ID.
+Uploads a local file of any size up to 5 GB to Notion and returns the Notion `file_upload` ID.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -114,7 +114,7 @@ If the upload succeeds but attaching fails (for example, the page isn't shared w
 ---
 
 ### `attach_file_upload_to_notion`
-Attaches an already uploaded file to a Notion page or block. Uploads that are never attached expire (see the upload's `expiry_time` in Notion's API).
+Attaches an already uploaded file to a Notion page or block. Notion expires uploads that aren't attached within an hour of being created.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -122,6 +122,16 @@ Attaches an already uploaded file to a Notion page or block. Uploads that are ne
 | `blockId` | string | **Yes** | Target Notion Page ID or parent Block ID |
 | `blockType` | string | **Yes** | `video`, `pdf`, `image`, `audio`, or `file` |
 | `caption` | string | No | Optional caption text displayed under the block (up to 2,000 characters) |
+
+---
+
+## Limitations
+
+- The server reads files from the computer it runs on, so it needs an MCP client that runs local servers. Files attached in a chat on claude.ai or ChatGPT aren't on that disk.
+- Free Notion workspaces accept files up to 5 MiB. Paid plans allow up to 5 GB.
+- Each upload has to be attached within an hour of starting, so a 5 GB file needs about 12 Mbit/s of upload bandwidth.
+
+Its name in the [MCP Registry](https://registry.modelcontextprotocol.io) is `io.github.shoubhiksaha/notion-large-file-upload`.
 
 ---
 

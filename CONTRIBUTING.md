@@ -20,7 +20,7 @@ CI runs the same test on pushes to `main` once the `NOTION_KEY` and `NOTION_PAGE
 ## Pull Requests
 
 1. Keep it small, focused, and tested.
-2. Update the README and documentation if introducing user-facing changes.
+2. Update the README and documentation if introducing user-facing changes. After editing `docs/`, run `npm run docs:llms` to rebuild `docs/llms-full.txt`.
 3. Check that `npm test` and `npm run test:mcp` pass before submitting.
 
 ## Releasing
@@ -31,4 +31,4 @@ The MCP server depends on the published library, so release the library first:
 
 1. Bump the library version (`npm version <version>`), update `CHANGELOG.md`, and push the commit and its `v<version>` tag. The workflow checks that the tag matches `package.json`, runs the tests, and publishes.
 2. In `mcp-server/`, update the `notion-multipart-uploader` dependency to the new version and run `npm install` to refresh `package-lock.json`.
-3. Bump `mcp-server/package.json`'s version, commit, and push an `mcp-v<version>` tag. The workflow tests the server against the published library and publishes it.
+3. Bump the version in `mcp-server/package.json` and in both `version` fields of `mcp-server/server.json` (the tests check they match), commit, and push an `mcp-v<version>` tag. The workflow tests the server against the published library, publishes it to npm, and then lists it in the [MCP Registry](https://registry.modelcontextprotocol.io) using the workflow's GitHub OIDC token, so no extra secret is needed.

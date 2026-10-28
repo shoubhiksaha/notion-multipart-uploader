@@ -61,6 +61,19 @@ test("lists the three tools with block type enums", () => withServer({}, async (
   assert.strictEqual(client.getServerVersion().version, require("./package.json").version);
 }));
 
+test("server.json matches package.json for the MCP Registry", () => {
+  const pkg = require("./package.json");
+  const server = require("./server.json");
+  // The registry rejects the listing unless the npm package's mcpName matches
+  assert.strictEqual(server.name, pkg.mcpName);
+  assert.strictEqual(server.version, pkg.version);
+  assert.deepStrictEqual(server.packages.map((p) => [p.identifier, p.version]), [[pkg.name, pkg.version]]);
+  assert.ok(server.description.length <= 100, "the registry limits descriptions to 100 characters");
+  const env = server.packages[0].environmentVariables;
+  assert.deepStrictEqual(env.map((v) => v.name), ["NOTION_KEY", "NOTION_UPLOAD_ALLOWED_DIRS"]);
+  assert.ok(env.every((v) => v.isRequired));
+});
+
 test("upload_large_file_to_notion uploads through the library and reports progress", () => withServer({}, async (client) => {
   const progress = [];
   const result = await client.callTool(

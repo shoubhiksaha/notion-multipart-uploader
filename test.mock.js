@@ -735,3 +735,110 @@ test('Mock: a 429 pauses every worker until Retry-After has passed', async () =>
     assert.deepStrictEqual(sentDuringPause, [], "Workers kept sending parts while Notion was rate-limiting");
     assert.strictEqual(partStarts.length, 6); // 5 parts + the retried part 1
 });
+
+test('Mock: a 429 for a blocked connection is not retried', async () => {
+    let calls = 0;
+    global.fetch = async () => {
+        calls++;
+        return respond({
+            object: "error", status: 429, code: "rate_limited", message: "API access restricted",
+            additional_data: { rate_limit_reason: "public_api_request_blocked" }
+        }, 429, { 'Retry-After': '0' });
+    };
+
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"),
+        { code: "rate_limited", status: 429, retryable: false }
+    );
+    assert.strictEqual(calls, 1);
+});
+
+test('Mock: the wait in a 429 body is used when there is no Retry-After header', async () => {
+    const random = Math.random;
+    Math.random = () => 0; // No jitter, so the default backoff would be exactly 1 second
+    try {
+        let calls = 0;
+        global.fetch = async (url) => {
+            calls++;
+            if (calls === 1) return respond({ object: "error", status: 429, code: "rate_limited", additional_data: { retry_after: "0" } }, 429);
+            if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url" });
+            return respond();
+        };
+        const start = Date.now();
+        await uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt");
+        assert.ok(Date.now() - start < 500, "Waited for the default backoff instead of the body's retry_after");
+    } finally {
+        Math.random = random;
+    }
+});
+
+test('Mock: a send or complete that went through despite a 5xx is not reported as failed', async () => {
+    // Notion saves the last request but answers 504, then rejects the retry because the upload is no longer pending
+    const mockSavedThen504 = (lastUrl, status) => {
+        const requests = [];
+        let answered504 = false;
+        global.fetch = async (url, options) => {
+            requests.push(`${options.method} ${url}`);
+            if (url.endsWith('users/me')) return respond({});
+            if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url", complete_url: "mock-complete" });
+            if (url.endsWith('file_uploads/mock-id')) return respond({ object: "file_upload", id: "mock-id", status });
+            if (url === lastUrl) {
+                if (!answered504) {
+                    answered504 = true;
+                    return respond("gateway timeout", 504, { 'Retry-After': '0' });
+                }
+                return respond({ object: "error", status: 400, code: "validation_error", message: "File upload is not pending" }, 400);
+            }
+            return respond();
+        };
+        return requests;
+    };
+
+    const random = Math.random;
+    Math.random = () => 0;
+    try {
+        let requests = mockSavedThen504('mock-url', 'uploaded');
+        assert.strictEqual(await uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"), "mock-id");
+        assert.ok(requests.includes("GET https://api.notion.com/v1/file_uploads/mock-id"));
+
+        mockSavedThen504('mock-complete', 'uploaded');
+        assert.strictEqual(await uploadToNotion("dummy-key", Buffer.alloc(21 * MiB), "video/mp4", "v.mp4"), "mock-id");
+
+        // If the upload isn't actually uploaded, Notion's error is reported
+        mockSavedThen504('mock-url', 'pending');
+        await assert.rejects(
+            () => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"),
+            { code: "validation_error", status: 400 }
+        );
+
+        // A 400 without an earlier 5xx fails straight away, without checking the upload
+        requests = [];
+        global.fetch = async (url, options) => {
+            requests.push(`${options.method} ${url}`);
+            if (url.endsWith('file_uploads')) return respond({ id: "mock-id", upload_url: "mock-url" });
+            return respond({ object: "error", status: 400, code: "validation_error", message: "bad file" }, 400);
+        };
+        await assert.rejects(() => uploadToNotion("dummy-key", Buffer.from("hi"), "text/plain", "a.txt"), { code: "validation_error" });
+        assert.deepStrictEqual(requests, ["POST https://api.notion.com/v1/file_uploads", "POST mock-url"]);
+    } finally {
+        Math.random = random;
+    }
+});
+
+test('Mock: filenames over Notion\'s 900-byte limit are rejected before contacting Notion', async () => {
+    let fetchCount = 0;
+    global.fetch = async () => {
+        fetchCount++;
+        return respond({ id: "mock-id", upload_url: "mock-url" });
+    };
+
+    // 450 two-byte characters plus ".txt" is 904 bytes in UTF-8, although it's only 454 characters
+    await assert.rejects(
+        () => uploadToNotion("dummy-key", Buffer.from("x"), "text/plain", "é".repeat(450) + ".txt"),
+        { code: "filename_too_long" }
+    );
+    assert.strictEqual(fetchCount, 0);
+
+    // Exactly 900 bytes is allowed
+    await uploadToNotion("dummy-key", Buffer.from("x"), "text/plain", "a".repeat(896) + ".txt");
+});

@@ -15,7 +15,7 @@ export interface UploadOptions {
     concurrency?: number;
     /** Callback reporting upload progress in bytes: (uploadedBytes, totalBytes) => void */
     onProgress?: (uploadedBytes: number, totalBytes: number) => void;
-    /** Check that Notion supports the file type and that the file fits the workspace's upload limit before uploading (default: true) */
+    /** Check the file type, the filename length and that the file fits the workspace's upload limit before uploading (default: true) */
     preflight?: boolean;
 }
 
@@ -40,7 +40,7 @@ export type StreamData = AsyncIterable<Uint8Array | string>;
  *
  * `code` is Notion's error code for API errors (e.g. 'validation_error', 'unauthorized', 'rate_limited'),
  * or one of: 'aborted', 'timeout', 'network_error', 'invalid_response', 'empty_file', 'not_a_file',
- * 'file_too_large', 'unsupported_file_type', 'file_changed', 'size_mismatch'.
+ * 'file_too_large', 'unsupported_file_type', 'filename_too_long', 'file_changed', 'size_mismatch'.
  */
 export class NotionUploadError extends Error {
     /** Notion's error code, or one of this library's codes listed above */
@@ -66,6 +66,7 @@ const FREE_WORKSPACE_LIMIT = 5 * 1024 * 1024;  // Every workspace accepts files 
 const SINGLE_PART_LIMIT = 20 * 1024 * 1024;    // Larger files must use multi-part uploads
 // 10 MiB is Notion's recommended part size; 5 GB / 10 MiB = 512 parts, under Notion's 1,000-part limit.
 const CHUNK_SIZE = 10 * 1024 * 1024;
+const MAX_FILENAME_BYTES = 900;                // Including the extension, in UTF-8
 
 type UploadSource =
     | { type: 'path', filePath: string, size: number }
@@ -81,6 +82,12 @@ type UploadSource =
  * @param mimeType - e.g., 'audio/mp4', 'image/jpeg', 'application/pdf'. Inferred from the file extension if omitted.
  * @param options - Additional options like retries, Notion API version, or the filename shown in Notion
  * @returns The Notion File ID to use in your blocks
+ * @example
+ * const fileId = await uploadFile(process.env.NOTION_KEY, "./demo.mp4");
+ * await notion.blocks.children.append({
+ *     block_id: pageId,
+ *     children: [{ type: "video", video: { type: "file_upload", file_upload: { id: fileId } } }]
+ * });
  */
 export async function uploadFile(
     apiKey: string,
@@ -230,13 +237,19 @@ class StreamReader {
 
 const formatBytes = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 
-// Notion error responses are JSON with a `code` such as 'validation_error'
-function notionErrorCode(body: string): string | undefined {
+// Notion error responses are JSON with a `code` such as 'validation_error'. 429 and 529 responses also
+// carry `additional_data.retry_after` and, for 429s, `additional_data.rate_limit_reason`.
+function parseNotionError(body: string): { code?: string, rateLimitReason?: string, retryAfter?: string } {
     try {
-        const code = JSON.parse(body)?.code;
-        return typeof code === 'string' ? code : undefined;
+        const error = JSON.parse(body);
+        const str = (value: unknown) => typeof value === 'string' ? value : undefined;
+        return {
+            code: str(error?.code),
+            rateLimitReason: str(error?.additional_data?.rate_limit_reason),
+            retryAfter: str(error?.additional_data?.retry_after)
+        };
     } catch {
-        return undefined;
+        return {};
     }
 }
 
@@ -265,6 +278,12 @@ async function uploadToNotionInternal(
         throw new NotionUploadError(
             `Notion doesn't accept "${filename}" (${contentType}). Use a supported file type (https://developers.notion.com/docs/working-with-files-and-media), or pass preflight: false to skip this check.`,
             { code: 'unsupported_file_type' }
+        );
+    }
+    if (preflight && new TextEncoder().encode(filename).byteLength > MAX_FILENAME_BYTES) {
+        throw new NotionUploadError(
+            `Filename "${filename.slice(0, 40)}…" is longer than Notion's limit of ${MAX_FILENAME_BYTES} bytes. Pass a shorter filename.`,
+            { code: 'filename_too_long' }
         );
     }
 
@@ -302,7 +321,14 @@ async function uploadToNotionInternal(
 
     // Exponential backoff retry wrapper with Abort/Timeout, Jitter, and Retry-After support.
     // Resolves with the response body so the timeout also covers reading it.
-    const fetchWithRetry = async (url: string, fetchOptions: RequestInit): Promise<string> => {
+    //
+    // Notion only recommends retrying 5xx responses for idempotent requests, because a write may have gone
+    // through anyway. Retrying the upload's writes is still safe: a repeated create only leaves an unused
+    // upload behind, which Notion expires, and `alreadyDone` lets a repeated send or complete that Notion
+    // rejects check whether the earlier attempt went through.
+    const fetchWithRetry = async (url: string, fetchOptions: RequestInit, alreadyDone?: () => Promise<boolean>): Promise<string> => {
+        // Set when an attempt failed in a way that doesn't tell us whether Notion processed it
+        let outcomeUnknown = false;
         for (let attempt = 1; ; attempt++) {
             const rateLimitWait = rateLimitedUntil - Date.now();
             if (rateLimitWait > 0) await sleep(rateLimitWait);
@@ -330,6 +356,7 @@ async function uploadToNotionInternal(
                         : new NotionUploadError(`Network error: ${(err as Error)?.message ?? err}`, { code: 'network_error', retryable: true, cause: err });
                 }
                 // Network failures and timeouts are transient, so back off and retry
+                outcomeUnknown = true;
                 await sleep(1000 * Math.pow(2, attempt - 1) + Math.random() * 1000);
                 continue;
             } finally {
@@ -339,10 +366,16 @@ async function uploadToNotionInternal(
 
             if (res.ok) return body;
 
-            const code = notionErrorCode(body);
+            const { code, rateLimitReason, retryAfter: bodyRetryAfter } = parseNotionError(body);
 
             // Retry only on Rate Limits (429) and Server Overload/Unavailable (5xx)
             if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+                if (outcomeUnknown && alreadyDone && await alreadyDone()) return body;
+                throw new NotionUploadError(`Notion API Error (${res.status}): ${body}`, { code: code ?? 'http_error', status: res.status });
+            }
+
+            // Notion has restricted this connection's API access, and retrying won't help
+            if (res.status === 429 && rateLimitReason === 'public_api_request_blocked') {
                 throw new NotionUploadError(`Notion API Error (${res.status}): ${body}`, { code: code ?? 'http_error', status: res.status });
             }
 
@@ -350,9 +383,12 @@ async function uploadToNotionInternal(
                 throw new NotionUploadError(`Notion API Failed (${res.status}): ${body}`, { code: code ?? 'http_error', status: res.status, retryable: true });
             }
 
-            // Calculate delay: Respect Retry-After header if present, otherwise exponential backoff
+            // A rate-limited request wasn't processed, but a request that got a 5xx may have been
+            if (res.status >= 500) outcomeUnknown = true;
+
+            // Calculate delay: Respect Retry-After (or its copy in the body) if present, otherwise exponential backoff
             let delayMs = 1000 * Math.pow(2, attempt - 1);
-            const retryAfter = res.headers.get('Retry-After');
+            const retryAfter = res.headers.get('Retry-After') ?? bodyRetryAfter;
             if (retryAfter) {
                 const parsed = parseInt(retryAfter, 10);
                 if (!isNaN(parsed)) {
@@ -473,6 +509,21 @@ async function uploadToNotionInternal(
             throw new NotionUploadError(`Unexpected response from Notion when creating the upload: ${JSON.stringify(createData)}`, { code: 'invalid_response' });
         }
 
+        // After an attempt that may have gone through, Notion rejects a repeated send or complete because the
+        // upload is no longer pending. If it is already uploaded, the earlier attempt succeeded.
+        const isUploaded = async () => {
+            try {
+                const upload = JSON.parse(await fetchWithRetry(`https://api.notion.com/v1/file_uploads/${id}`, {
+                    method: "GET",
+                    headers: notionHeaders(false)
+                }));
+                return upload?.status === 'uploaded';
+            } catch (err) {
+                if (uploadSignal.aborted) throw err;
+                return false;
+            }
+        };
+
         reportProgress(0);
 
         // Step 2: Upload the binary data
@@ -486,7 +537,7 @@ async function uploadToNotionInternal(
                 method: "POST",
                 headers: notionHeaders(false),
                 body: form
-            });
+            }, isUploaded);
 
             reportProgress(size);
             return id;
@@ -544,7 +595,7 @@ async function uploadToNotionInternal(
             method: "POST",
             headers: notionHeaders(true),
             body: JSON.stringify({})
-        });
+        }, isUploaded);
 
         return id;
     } finally {
